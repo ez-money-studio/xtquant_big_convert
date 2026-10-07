@@ -50,6 +50,7 @@ dev = [
 
 [project.scripts]
 bigqmt-init = "bigqmt_signal_trader.init_config:main"
+bigqmt-env = "bigqmt_signal_trader.init_config:main_env"
 
 [project.urls]
 Homepage = "https://github.com/litaolemo/xtquant_big_convert"

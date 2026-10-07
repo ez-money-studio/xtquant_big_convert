@@ -22,6 +22,12 @@ dist/
 *.log
 *.pid
 
+# Local env profiles hold the account id, passwords and machine paths.
+# .env.template is the committed shape; every real profile stays untracked.
+.env
+.env.*
+!.env.template
+
 # Generated evidence from standalone/QMT backtest bridge runs.
 backtest_runs/
 qmt_backtest_runs/

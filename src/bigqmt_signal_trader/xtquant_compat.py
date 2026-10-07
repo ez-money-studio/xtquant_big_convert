@@ -362,6 +362,16 @@ def _missing_account_id_message():
 
 def load_client_config(module_name=None):
     """Load local private client config without requiring environment variables."""
+    # An explicitly selected .env profile (BIGQMT_ENV / BIGQMT_ENV_FILE) is the
+    # operator's stated source of truth, so a *_config.py module left over from
+    # an earlier bigqmt-init must not quietly win over it. Without that explicit
+    # selection a profile only fills unset environment variables, and the
+    # config module keeps its normal precedence (#env-config).
+    from . import env_config
+
+    env_config.autoload()
+    if env_config.is_authoritative():
+        return {}
     candidates = []
     selected = module_name or os.environ.get(CLIENT_CONFIG_MODULE_ENV)
     if selected:
@@ -1467,6 +1477,14 @@ class BigQmtRpcClient:
             or "redis"
         ).lower()
         self.zmq_config = dict(merged_redis_config.get("zmq") or {})
+        # A .env profile carries the QMT host/port for a cross-machine zmq
+        # deployment, where there is no config-module key for them. Same-host
+        # needs neither: the port is derived from the account id. setdefault so
+        # an explicit config module always wins over the environment.
+        if os.environ.get("BIGQMT_ZMQ_HOST"):
+            self.zmq_config.setdefault("host", os.environ["BIGQMT_ZMQ_HOST"])
+        if os.environ.get("BIGQMT_ZMQ_PORT"):
+            self.zmq_config.setdefault("port", _env_int("BIGQMT_ZMQ_PORT", 0))
         self.mysql_config = dict(merged_redis_config.get("mysql") or {})
         self._transport_instance = None  # lazily built by _transport()
         # FormulaServer read fast-path. QMT's C++ quote service (port 58600)
@@ -7092,6 +7110,13 @@ xtdata = None
 
 def configure(account_id=None, redis_client=None, redis_config=None, timeout_seconds=None):
     global _default_client, xt_trader, xtdata
+    # A .env profile in the working directory -- or one named by BIGQMT_ENV /
+    # BIGQMT_ENV_FILE -- fills os.environ before the client reads it, so a
+    # deployment can live entirely in .env.dev / .env.prod instead of a
+    # generated config module. No profile anywhere means this is a no-op.
+    from . import env_config
+
+    env_config.autoload()
     _default_client = BigQmtRpcClient(
         account_id=account_id,
         redis_client=redis_client,

@@ -587,6 +587,13 @@ def main(argv=None):
                         help="已存在的文件直接覆盖，不再询问")
     parser.add_argument("--repo-root", default=None,
                         help="仓库根目录（单文件构建需要 tools/ 下的生成器）")
+    parser.add_argument(
+        "--from-env", nargs="?", const="", default=None, metavar="PROFILE",
+        help="不进入交互问答，用 .env.<PROFILE> 生成两份配置"
+             "（省略 PROFILE 时读 BIGQMT_ENV，默认 dev）")
+    parser.add_argument(
+        "--env-file", default=None,
+        help="直接指定 .env 文件，配合 --from-env 使用")
     args = parser.parse_args(argv)
 
     repo_root = args.repo_root or os.path.dirname(
@@ -594,6 +601,10 @@ def main(argv=None):
 
     write = sys.stdout.write
     read = lambda prompt: input(prompt)  # noqa: E731 -- injected in tests
+
+    if args.from_env is not None:
+        return _apply_profile(write, args.from_env or None, args.env_file,
+                              args.force)
 
     try:
         answers = prompt_answers(write, read)
@@ -607,6 +618,73 @@ def main(argv=None):
 
     _report(write, answers, written)
     return 0
+
+
+def _apply_profile(write, profile, env_file, force):
+    """``--from-env`` / ``bigqmt-env``: render both files from a .env profile."""
+    from . import env_config
+
+    env_config.reset_autoload()
+    try:
+        info = env_config.load_env(profile=profile, path=env_file, override=True)
+    except Exception as exc:
+        write("\n失败：%s\n" % exc)
+        return 1
+    write(env_config.describe(info) + "\n")
+    if not info.get("source"):
+        write("\n没有找到 .env 文件：把 .env.template 复制成 .env.dev / .env.prod，"
+              "或用 --env-file 指定路径。\n")
+        return 1
+    try:
+        written = write_configs_from_env(info.get("values") or {}, force=force)
+    except ValueError as exc:
+        write("\n失败：%s\n" % exc)
+        return 1
+    for path in written:
+        write("wrote %s\n" % path)
+    write("\n提示：服务端文件要拷进 QMT 的 python 目录，客户端文件放在"
+          "你运行脚本的目录。\n")
+    return 0
+
+
+def write_configs_from_env(values=None, force=True, env=None):
+    """Render both config files from .env values; returns the paths written.
+
+    The client file goes to ``BIGQMT_CLIENT_DIR`` (default: this directory) and
+    the server file to ``BIGQMT_QMT_PYTHON_DIR`` when that is set -- the server
+    file is what carries ``BIGQMT_ACCOUNT_TYPE`` and the order switch, so a
+    client that never generates it runs with server-side defaults.
+    """
+    from . import env_config
+
+    answers = env_config.answers_from_env(values=values, env=env)
+    if not answers["account_id"]:
+        raise ValueError(
+            "BIGQMT_ACCOUNT_ID 为空 —— 先在 profile 里填上资金账号再生成")
+    targets = [(
+        os.path.join(answers["client_dir"] or os.getcwd(),
+                     "bigqmt_signal_trader_client_config.py"),
+        render_client_config(answers),
+    )]
+    if answers["qmt_python_dir"]:
+        targets.append((
+            os.path.join(answers["qmt_python_dir"],
+                         "bigqmt_signal_trader_local_config.py"),
+            render_server_config(answers),
+        ))
+    written = []
+    for path, text in targets:
+        if os.path.exists(path) and not force:
+            continue
+        _write(path, text)
+        written.append(path)
+    return written
+
+
+def main_env(argv=None):
+    """``bigqmt-env`` console script: ``bigqmt-init --from-env <args>``."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    return main(["--from-env"] + argv)
 
 
 if __name__ == "__main__":

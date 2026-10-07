@@ -41,3 +41,5 @@ PRs should describe the behavior change, list verification performed, and link i
 ## Security & Configuration Tips
 
 Never commit account ids, Redis passwords, or QMT paths: keep `*_local_config.py` / `*_client_config.py` untracked (`*.local.py` is ignored). Remote order methods stay off unless `rpc_allow_order_methods=True` is set deliberately. The Redis upper bound in `pyproject.toml` (`<8.0.0`) is intentional and pinned by `tests/test_dependency_constraints.py`.
+
+Local secrets live in `.env.<profile>` (`.env.dev`, `.env.prod`), both gitignored; only `.env.template` is committed. `bigqmt_signal_trader/env_config.py` parses them, `bigqmt-env` regenerates the two config files, and `BIGQMT_ENV_DISABLE=1` switches discovery off for harnesses. Keep `init_config` out of `env_config`: the single-file builders refuse to embed `init_config.py`, and their check is a plain text scan.

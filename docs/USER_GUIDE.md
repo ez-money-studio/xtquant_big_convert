@@ -52,6 +52,31 @@ python -m bigqmt_signal_trader.init_config
 >
 > 生成的文件带账号和凭据，**不要提交到版本库**。
 
+### 用 `.env` 管理账号、密码和路径（可选，替代逐次问答）
+
+你不想把资金账号、密码、QMT 安装路径写死在脚本或配置文件里时，用 profile 文件：
+
+| 文件 | 提交？ | 用途 |
+|---|---|---|
+| `.env.template` | **提交** | 所有可用键的模板，无真实值 |
+| `.env.dev` | 不提交 | 模拟端 |
+| `.env.prod` | 不提交 | 实盘 |
+
+选哪个：`BIGQMT_ENV=dev` / `BIGQMT_ENV=prod`（默认 `dev`），或用 `BIGQMT_ENV_FILE=<路径>` 直接指名文件。
+
+**用法一，直接生效**：`bigqmt_signal_trader.xtquant_compat` 导入时会从当前目录向上找 profile 并写进环境变量，客户端按它平时的环境变量回退读——不需要生成任何配置文件。
+
+**用法二，生成两份配置**（服务端的账号类型、下单开关这些键只存在于配置文件里）：
+
+```powershell
+bigqmt-env --from-env prod          # 等价于 bigqmt-init --from-env prod
+bigqmt-env --env-file D:\cfg\.env.prod
+```
+
+它按 `BIGQMT_QMT_PYTHON_DIR` / `BIGQMT_CLIENT_DIR` 把 `bigqmt_signal_trader_local_config.py` 和 `bigqmt_signal_trader_client_config.py` 写到位，和交互版 `bigqmt-init` 生成的内容完全一致（zmq 端口同样按账号推导）。
+
+**优先级**：显式选了 profile（`BIGQMT_ENV`/`BIGQMT_ENV_FILE`/`--env-file`）时，`.env` 赢过路上捡到的 `*_config.py`；否则配置文件照旧优先，`.env` 只补未设置的环境变量。shell 里已有的非空变量始终盖过文件，除非用 `--from-env`（它按 profile 覆盖）。测试或构建里不想让本地 profile 生效，设 `BIGQMT_ENV_DISABLE=1`。
+
 ## 功能一览
 
 ### RPC 接口（远程可调用）
