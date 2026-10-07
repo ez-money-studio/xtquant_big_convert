@@ -43,6 +43,9 @@ msgpack = ["msgpack>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    # Six test modules exercise DataFrame-shaped market data and import pandas
+    # at module scope, so the suite cannot even collect without it.
+    "pandas>=1.5.0",
 ]
 
 [project.scripts]
