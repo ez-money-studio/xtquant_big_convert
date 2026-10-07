@@ -76,3 +76,12 @@ include = ["bigqmt_signal_trader*", "bigqmt_backtest*", "xtquant*"]
 
 [tool.setuptools.package-data]
 bigqmt_signal_trader = ["*.md", "_singlefile/*.txt"]
+
+# `uv sync` / `uv run` install exactly what the lock resolves, so a bare
+# `uv run` used to uninstall every extra that was not asked for -- pytest and
+# pandas would vanish and the suite would stop collecting. uv installs the
+# `dev` group by default; pointing it at this project's own extras keeps one
+# source of truth for the version bounds instead of copying them here.
+# uv-only: pip users still opt in one extra at a time.
+[dependency-groups]
+dev = ["xtquant-big-convert[dev,redis,mysql]"]
