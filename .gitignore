@@ -14,10 +14,12 @@ dist/
 *.egg-info/
 
 # Local runtime secrets. Keep real account ids, Redis passwords and QMT paths out of git.
-# bigqmt_signal_trader_local_config.py
-# src/bigqmt_signal_trader_local_config.py
-# bigqmt_signal_trader_client_config.py
-# src/bigqmt_signal_trader_client_config.py
+# The *.example.py files stay tracked; these are the real ones bigqmt-init and
+# bigqmt-env generate, which carry an account id and Redis credentials.
+bigqmt_signal_trader_local_config.py
+src/bigqmt_signal_trader_local_config.py
+bigqmt_signal_trader_client_config.py
+src/bigqmt_signal_trader_client_config.py
 *.local.py
 *.log
 *.pid
