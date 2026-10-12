@@ -340,6 +340,12 @@ def answers_from_env(values=None, env=None):
         "username": str(source.get("BIGQMT_REDIS_USERNAME") or ""),
         "password": str(source.get("BIGQMT_REDIS_PASSWORD") or ""),
         "allow_order_methods": _as_bool(source.get("BIGQMT_ALLOW_ORDER_METHODS"), False),
+        # 终端侧三个可调项（2026-10-12 加，对应 issue #396 的缓解三连）。默认值 =
+        # 老行为：回调照发、drain 模式、100ms adjust tick。只有显式配了才变。
+        "exec_events_enabled": _as_bool(source.get("BIGQMT_EXEC_EVENTS_ENABLED"), True),
+        "rpc_background_threads": _as_bool(source.get("BIGQMT_RPC_BACKGROUND_THREADS"), False),
+        "schedule_adjust_interval": str(
+            source.get("BIGQMT_SCHEDULE_ADJUST_INTERVAL") or "100nMilliSecond").strip(),
         "deployment": "package",
         "qmt_python_dir": str(source.get("BIGQMT_QMT_PYTHON_DIR") or ""),
         "client_dir": str(source.get("BIGQMT_CLIENT_DIR") or ""),

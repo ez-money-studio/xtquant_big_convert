@@ -96,6 +96,32 @@ def _zmq_server_bind_host(client_host):
     return "0.0.0.0"
 
 
+def _background_threads(answers):
+    """显式答案优先，否则按传输给默认（见 `_background_threads_for`）。
+
+    为什么要留这个覆盖口（2026-10-12，issue #396）：某些券商终端的 order/deal
+    回调**全天不触发**，`order_stock` 恒等 ~210s 才返回，而终端的慢查询又占着
+    adjust drain ——整条 RPC 会瘫几分钟。桥作者给的缓解是让接收线程自持
+    （True，不走 drain）并把 adjust tick 放慢。默认仍是老行为（drain / False）。
+    """
+    if "rpc_background_threads" in (answers or {}):
+        return bool(answers["rpc_background_threads"])
+    return _background_threads_for((answers or {}).get("transport"))
+
+
+def _schedule_adjust_interval(answers):
+    """adjust tick 间隔。默认 100ms（最快的地板延迟）；#396 那种终端建议放到 2000ms
+    减少 GIL 抢占 —— 代价是 RPC 地板延迟升一档。"""
+    return str((answers or {}).get("schedule_adjust_interval") or "100nMilliSecond")
+
+
+def _exec_events_enabled(answers):
+    """执行事件推送开关。默认 True；终端的回调链路是死的（#396）就该关掉，别空转。"""
+    if "exec_events_enabled" in (answers or {}):
+        return bool(answers["exec_events_enabled"])
+    return True
+
+
 def _background_threads_for(transport):
     """Which rpc_background_threads value this transport wants: False, all of them.
 
@@ -163,9 +189,9 @@ def render_server_config(answers):
         "    # background thread pays ~1 adjust tick per GIL acquisition (#343).",
         '    "rpc_process_in_listener": True,',
         '    "rpc_listener_methods": ("*",),',
-        '    "rpc_background_threads": %r,' % _background_threads_for(answers["transport"]),
+        '    "rpc_background_threads": %r,' % _background_threads(answers),
         '    "schedule_adjust": True,',
-        '    "schedule_adjust_interval": "100nMilliSecond",',
+        '    "schedule_adjust_interval": %r,' % _schedule_adjust_interval(answers),
         '    "full_tick_cache_enabled": False,',
         '    "full_tick_demand_ttl_seconds": 10,',
         '    "full_tick_cache_ttl_seconds": 10,',
@@ -177,7 +203,7 @@ def render_server_config(answers):
         '    "download_job_chunk_size": 10,',
         '    "download_job_max_wall_seconds": 0.5,',
         '    "download_job_ttl_seconds": 3600,',
-        '    "exec_events_enabled": True,',
+        '    "exec_events_enabled": %r,' % _exec_events_enabled(answers),
         '    "exec_events_debug_raw_fields": False,',
         "}",
         "",
