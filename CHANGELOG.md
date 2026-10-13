@@ -3,7 +3,12 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 和 [语义化版本](https://semver.org/)。
 
 
-## [0.3.62] - 2026-10-13
+## [0.3.66] - 2026-10-13
+
+### 说明
+
+- 本版是 fork 发布：把上游 0.3.62~0.3.65 整条线并入（含 #409「pipe 命名管道原生推送回调事件」——pipe 部署的 order/trade/order_error 回调不再靠 1 秒轮询合成），上游各版原文见下面的段落。
+- 本段记录 fork 自己的工作：`transport="shm"`（共享内存传输）与 pipe 单文件的纯 ASCII 打包。
 
 ### 升级注意
 
@@ -124,6 +129,89 @@ pipe 单文件加载失败（2026-10-13 二次）之后的补充验证：
 （UnicodeDecodeError）。按仓库惯例这些产物是 gitignore 的本地文件、用后即弃；
 要根治，让那两处扫描按文件声明的编码读、或跳过 `*ALL_IN_ONE*.py`。
 
+
+## [0.3.65] - 2026-10-13
+
+### 升级注意
+
+- #397 的返回值变化：`download_history_data2` 在追加盲区（窗口终点早于终端本地末根、
+  终端零写入）时不再报 `finished == total`，盲区代码计入新增的 `skipped` 键——
+  依赖 `finished == total` 判完成的调用方请改用 `not result.get('skipped')`。
+
+### 修复
+
+- **shim 补 `query_secu_account`**（#406，@TsqGit 报告，光大 2.1.29）。终端在下单校验与
+  账户会话探测链上按属性名回调 trader 对象的 `query_secu_account`（桥与 xtquant 代码中
+  零命中的运行时探测），缺属性时 AttributeError 中断操作（实盘一只标的下单被迫人工兜底、
+  清算后每 5 分钟一条报错）。实现为 `query_stock_asset` 别名（含 async 变体）。
+- **下载追加盲区不再冒充完成**（#397，@yucejade 报告并附 DAT 级证据）。终端注入下载只会
+  从本地末根向后追加：早于末根的窗口静默零写入但任务报"已受理"，轮询的停牌/退市容忍
+  分支又把空窗口计入 finished——`{'finished': N, 'total': N}` 配零写入。现在空窗口代码
+  经一次合批尾部读甄别：有更新数据 = 追加盲区，计入 `result['skipped']`（不计 finished）
+  并告警；真无数据代码维持原容忍。miniQMT 全窗口语义依赖终端引擎能力，#397 保持开启。
+
+## [0.3.64] - 2026-10-10
+
+### 修复
+
+- **`get_instrument` 在终端合约库被污染的机器上对齐 miniQMT 的正确值**（#405 的条件性缓解，
+  @yucejade 报告并贡献 PR #407）。终端侧 `ContextInfo.get_instrumentdetail` 的合约库在个别机器上
+  被污染且重启不自愈（`OpenDate` 返回 0 或借壳/更名日），而同机常驻登录的 miniQMT 行情服务对同批
+  代码全部正确。`get_instrument` 改走既有 `_native_or_context` 模式：native SDK 优先、ContextInfo
+  回落、#160 死标记窗口吸收拨号成本，开关沿用 `native_xtdata_enabled`（redis 传输默认开）。
+  **局限（重要）**：只有同机常驻登录 miniQMT 的部署才受益；没有 miniQMT 的部署行为不变（native
+  拨号失败即回落，每 600 秒窗口付一次拨号成本）。#405 的根治（终端合约库为何被污染、如何刷新）
+  仍开着。
+
+## [0.3.63] - 2026-10-10
+
+### 修复
+
+- **ZMQ 推送通道订阅者泄漏（重订阅阶梯式重复推送）**（#403，@simonfantasy 报告并给出根因与修法）。
+  `ZmqQuotePushChannel._sub_loop` 此前 keyed 在共享实例属性 `_running` 上：`stop()` 置 False，
+  下一次 `start_subscriber()` 置回 True——join 超时（线程卡在 on_msg 回调里）的旧线程看到 True
+  又复活，且挂着它创建时的旧 topic 集合。客户端每次 topic 集合变化都 stop+start，订阅 N 批就
+  留下最多 N-1 个僵尸订阅者，靠前的批被每个僵尸各收一份（实测 1.7×–7× 阶梯复制）。Redis 通道
+  早已是"每个订阅者私有 Event"，ZMQ 这路没跟上。现在对齐：订阅者捕获自己的 Event，join 超时
+  不再泄漏（Event 已置位，回调返回即退出并自闭 socket）；`start_subscriber` 自洽地先停旧的；
+  新增 `active_subscribers()` 诊断（健康值 0 或 1）。
+
+## [0.3.62] - 2026-10-09
+
+### 升级注意
+
+- 本次含**策略文件**（`bigqmt_signal_trader_strategy.py`：#389 合成事件的发布钩子装配）与
+  **runtime 顶层模块**（`bigqmt_signal_trader_redis_rpc_runtime.py`：#396 配置链）改动，
+  两者都不在 `reload_deployment` 的 purge 范围内——**策略重启一次才能全部生效**；
+  `sync + reload` 只激活包内改动。lemo 实盘已在重启后的 zmq 部署上验证全部生效。
+- #389 的 cancel_error 推送覆盖同步撤单路径；批量撤单（cancel_orders_batch）本就跳过结算、
+  靠原生状态推送确认，不在本次范围。
+
+### 修复
+
+- **pipeline 发布失败的异常消息不再内嵌完整响应载荷**（#398，@yucejade 报告并贡献 PR #399）。
+  redis-py 对失败的 pipeline 批量命令把完整命令参数（=响应 JSON 本身）渲染进异常消息：redis
+  maxmemory 触顶时单行日志实测 20MB、单文件累计 542MB，桥进程 IO 持续劣化直至停止消费请求队列。
+  新增 `_slim_pipeline_error`：消息超 500 字符时保留异常类型与错误头（如 "OOM command not
+  allowed"）、尾部替换为省略标记；短消息原样透传。
+
+- **撤单失败现在会推送 `on_cancel_error`**（#389，@tokens-lin 报告）。已成交的委托再撤，QMT 只在
+  自己日志里记"当前委托状态[已成]不可撤"，**对策略没有任何回调**——此前桥也不推，策略只能对着
+  死单反复撤。客户端订阅与 `on_cancel_error` 分发、事件 normalize/发布通道本来就是通的，缺的
+  是服务端调用点：撤单结算路径（#148 的读回确认）是唯一能结论"撤单没成"的地方，五类失败结局
+  （终态不可撤/超时未找到/查询失败等）现在统一经 `_fail_cancel_settlement` 合成 cancel_error
+  事件，由策略装配的钩子走与原生事件相同的通道与兜底发布。
+
+- **`get_history_trade_detail_data` 保住分组并如实报错**（#395，@shengyy 报告并附离线复现）。
+  ① 官方返回 `[(timetag, [deal, ...]), ...]` 分组形态，此前被 `_normalize_detail_rows` 当平铺
+  行处理，返回 `[{}]`——分组和成交记录全丢；现在分组序列化为 `{timetag, details[]}`（平铺形态
+  仍兼容）。② 函数未绑定/原生抛错/真空历史三者此前都返回 `ok=True, data=[]`，调用方无法区分
+  "没有成交"与"没有函数"；现在未绑定明确报错、原生异常传播、只有真空才返回空。
+
+- **`order_settle_timeout_seconds` 配置真正生效**（#396 附带发现，@TsqGit 报告）。此前
+  `configure_runtime_redis` 不读该键、`_apply_config` 不透传，strategy 侧永远拿默认 3.0——
+  用户在 local_config 里配了不生效。链路照 `drain_budget_seconds` 模式补齐（None 默认不透传，
+  显式配置才进 rpc block）。
 
 ## [0.3.61] - 2026-10-01
 
