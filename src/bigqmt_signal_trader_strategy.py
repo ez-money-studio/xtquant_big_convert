@@ -1317,6 +1317,45 @@ def _diag_bar_driver(context_info):
     print("[bigqmt_diag]   本策略未订阅任何行情 -> handlebar 预计仅由历史回放驱动")
 
 
+def _diag_proxy_environment():
+    """Report how this process could be reaching a local proxy (#2026-10-14).
+
+    Two independent mechanisms, both worth printing when a terminal's security
+    module complains about ``127.0.0.1:<port>`` right after a strategy starts:
+
+    * environment variables -- honoured by requests/urllib, ignored by QMT's
+      Qt WebEngine (Chromium on Windows uses the system proxy, not HTTP_PROXY);
+    * the WinINET system proxy in the registry -- what the terminal's own web
+      UI actually follows, and therefore what dials the local proxy port.
+    """
+    import os  # module-level imports stay lean on purpose; this is startup-only
+
+    names = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+             "http_proxy", "https_proxy", "all_proxy", "no_proxy")
+    seen = ["%s=%s" % (name, os.environ[name]) for name in names if os.environ.get(name)]
+    print("[bigqmt_diag] proxy env: %s" % (", ".join(seen) if seen else "none"))
+    try:
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        try:
+            enable = winreg.QueryValueEx(key, "ProxyEnable")[0]
+        except OSError:
+            enable = 0
+        try:
+            server = winreg.QueryValueEx(key, "ProxyServer")[0]
+        except OSError:
+            server = ""
+        # 关掉它（或在 Clash 里改用 TUN）以后，终端自己的网页组件就不会再去连
+        # 本机代理端口，安全模块也就没有东西可报了。
+        print("[bigqmt_diag] system proxy: enabled=%s server=%s" % (enable, server))
+    except Exception as exc:
+        print("[bigqmt_diag] system proxy: unreadable (%s: %s)"
+              % (exc.__class__.__name__, exc))
+
+
 def _diag_startup(ContextInfo, config):
     """Startup diagnostics: check service status and key function bindings.
 
@@ -1354,6 +1393,14 @@ def _diag_startup(ContextInfo, config):
             print("[bigqmt_diag] get_full_tick=EMPTY (market may be closed)")
     except Exception as e:
         print("[bigqmt_diag] get_full_tick=FAIL: %s" % str(e)[:60])
+
+    # 4. Proxy environment (2026-10-14). A terminal whose security module kills
+    # outbound connections also pops "非法IP:127.0.0.1:<proxy port>" at strategy
+    # start -- and the dial it reports belongs to QMT's own web UI component,
+    # which follows the WinINET system proxy. Print both ways a proxy could have
+    # been configured, so the answer is in the log instead of a guess:
+    # Chromium/WebEngine on Windows reads the registry, NOT HTTP_PROXY.
+    _diag_proxy_environment()
 
     print("[bigqmt_diag] diagnostics complete")
     print("=" * 60)
