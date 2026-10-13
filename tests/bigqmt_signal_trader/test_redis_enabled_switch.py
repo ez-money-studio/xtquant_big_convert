@@ -347,10 +347,13 @@ class PipeBuildTest(unittest.TestCase):
     def test_the_builder_forces_pipe(self):
         self.assertIn('"transport"] = "pipe"', self._read(self.BUILDER))
 
-    def test_the_builder_disables_redis_and_quote_push(self):
+    def test_the_builder_disables_redis_but_keeps_the_push_service(self):
+        """#409：pipe 的事件管道是在 quote 推送服务里建的，关掉 quote_push 等于
+        连回调推送一起关掉（服务端照跑、客户端一个回调都收不到）——所以这里必须
+        只关 redis，不关 quote_push。"""
         text = self._read(self.BUILDER)
         self.assertIn('"redis_enabled"] = False', text)
-        self.assertIn('"quote_push"] = {"enabled": False}', text)
+        self.assertNotIn('"quote_push"] = {"enabled": False}', text)
 
     def test_the_builder_does_not_substitute_zmq(self):
         """pipe_transport 在包里、零依赖——pipe 版不做 no-redis 的

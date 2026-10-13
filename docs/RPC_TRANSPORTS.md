@@ -199,12 +199,30 @@ BIGQMT_REDIS_CONFIG = {
 - **要调 ctypes/kernel32。** 如果券商白名单连 `ctypes` 都拦，pipe 就起不来，这时用 shm
   （只用标准库 `mmap`）。
 
-其余都一样：只支持同一台机器，没有推送线（执行回调由客户端轮询合成，#372），
-`redis_enabled` 默认不下发、native xtdata（拨 58610）默认关。
+其余都一样：只支持同一台机器，`redis_enabled` 默认不下发、native xtdata（拨 58610）
+默认关。
+
+**推送线（#409，0.3.63 起）**：pipe 有自己的一条**事件管道**，与 RPC 管道分开
+（RPC 管道是同步句柄的请求/响应，塞不下服务端主动帧）。服务端写、客户端读，
+`order/trade/order_error/cancel_error` 与全推帧都走它，回调不再靠客户端 1 秒轮询
+合成；命名管道不是 socket，所以"外连即杀"的沙箱不会触发。管道名从 RPC 管道名派生
+（`bigqmt_rpc_events_<account>`），两端同规则、无需发现机制。
+
+⚠️ 两个会**静默丢回调**的坑，配置时必须避开：
+
+- **客户端配置里不能有 redis 地址。** `host` / `username` / `password` 任何一个非空，
+  客户端就把这套部署当成"有 redis"（`_redis_explicit`），事件推送改走 redis 通道 ——
+  而 pipe 服务端不往 redis 发，日志里一行都不报。`bigqmt-env` 生成的客户端配置对
+  pipe/shm 不写这些键（0.3.66 起），profile 里的 `BIGQMT_REDIS_HOST` 也要留空，
+  因为它会被 apply 进 `os.environ`，一样触发这个判定。
+- **服务端不能关 `quote_push`。** 那条事件管道是在 quote 推送服务里建的，关掉
+  `quote_push={"enabled": False}` 会让服务端直接不建通道（`_push_channel_sink()`
+  返回 None），服务端照跑、客户端一个回调都收不到。pipe 单文件打包器因此**不再**
+  关它（0.3.66 起；之前那行是"pipe 没有推送线"时代的产物）。
 
 单文件部署：`python tools/build_pipe_single_file_flat.py` →
 `src/BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py`（强制 `transport=pipe` + redis 关 +
-全推推送关）。
+推送服务保持开着，见上面那两条）。
 
 产物默认再过一遍 `tools/ascii_minify.py`：注释、docstring、空行去掉，字符串字面量里
 剩下的非 ASCII 字符转义成 `\uXXXX`，出来是**纯 ASCII**（1.02MB）。原因是沙箱 QMT 按

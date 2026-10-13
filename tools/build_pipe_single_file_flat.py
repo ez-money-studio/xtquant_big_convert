@@ -9,9 +9,15 @@ r"""Build BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py.
 与 no-redis 版的差异：
 - 不替换 zmq_transport（pipe_transport 本来就在包里，ctypes/kernel32 零依赖）；
 - 不内嵌 bigqmt_no_redis/；
-- 强制 transport=pipe + redis_enabled=False + quote_push 关（pipe 没有推送线，
-  执行回调由客户端轮询合成，#372）+ download_jobs / full_tick_cache 关
+- 强制 transport=pipe + redis_enabled=False + download_jobs / full_tick_cache 关
   （这两个需要 redis）。
+
+推送线**不关**：上游 0.3.63（#409）起 pipe 有自己的事件管道（服务端写、客户端读，
+命名管道不是 socket），order/trade/order_error/cancel_error 与全推帧都走它，回调
+不再靠客户端轮询合成。关掉 quote_push 会连这条通道一起关掉（服务端
+``_build_quote_subscription_service`` 直接返回 None → ``_push_channel_sink()`` 拿
+不到通道），表现是"服务端照跑、客户端一个回调都收不到"，所以这里绝不写
+``quote_push = {"enabled": False}``。
 
 用法：python tools/build_pipe_single_file_flat.py，产物在
 src/BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py（或用 BIGQMT_BUILD_OUT 指定）。
@@ -90,10 +96,13 @@ loader below resolves relative imports against the in-memory modules, so you
 can copy this one file to a QMT python directory and run it as a strategy
 without shipping the package alongside.
 
-Callbacks: the pipe has no push channel. on_stock_order / on_stock_trade /
-on_order_error are synthesized client-side by polling queries (#372, default
-1s, BIGQMT_EXEC_POLL_SECONDS). Whole-quote push (subscribe_whole_quote) is
-disabled in this build -- poll get_full_tick instead.
+Callbacks: on_stock_order / on_stock_trade / on_order_error / on_cancel_error
+arrive over the named-pipe events channel (#409), which the server writes and
+the client reads -- no polling, and no socket anywhere. The client side must
+not look like a redis deployment, or it subscribes to redis instead: a client
+config carrying host/username/password sets _redis_explicit and callbacks go
+silent with nothing in the log. generate it with `bigqmt-env`, which omits the
+redis block for pipe/shm.
 
 Edit BIGQMT_ACCOUNT_ID below before running.
 """)
@@ -149,13 +158,14 @@ PIPE_TEMPLATE = PIPE_TEMPLATE.replace(
     # Nothing here may dial out: redis 块不下发（懒 client 首个命令就 connect，
     # EDR 抓到就杀进程，2026-09-24 实盘）。
     BIGQMT_REDIS_CONFIG["redis_enabled"] = False
-    # pipe 没有推送线：全推推送关掉（客户端轮询 get_full_tick / 执行回调由
-    # 客户端轮询合成 #372）；下载队列和快照缓存需要 redis，一并关。
-    BIGQMT_REDIS_CONFIG["quote_push"] = {"enabled": False}
+    # 推送线**不能关**：上游 #409 起 pipe 的 exec 事件（order/trade/order_error）
+    # 与全推帧都走 events 管道，而这条通道正是在 quote_push 服务里建的 ——
+    # 关掉它 = 服务端照跑、客户端一个回调都收不到（客户端还在等事件管道）。
+    # 下载队列和快照缓存需要 redis，这两个仍然关。
     BIGQMT_REDIS_CONFIG.setdefault("download_jobs_enabled", False)
     BIGQMT_REDIS_CONFIG.setdefault("full_tick_cache_enabled", False)
     print("[bigqmt_shell] pipe mode: transport=pipe background_threads=%s "
-          "redis_enabled=False quote_push=False" % BIGQMT_REDIS_CONFIG["rpc_background_threads"])''')
+          "redis_enabled=False events_pipe=True" % BIGQMT_REDIS_CONFIG["rpc_background_threads"])''')
 
 assert "transport=pipe" in PIPE_TEMPLATE and '"transport": "pipe",' in PIPE_TEMPLATE, \
     "template replacements did not land"

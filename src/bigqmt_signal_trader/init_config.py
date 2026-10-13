@@ -31,6 +31,14 @@ import sys
 
 ACCOUNT_TYPES = ("STOCK", "CREDIT", "FUTURE", "STOCK_OPTION", "HUGANGTONG", "SHENGANGTONG")
 TRANSPORTS = ("redis", "zmq")
+
+#: 禁外连的沙箱传输。给它们生成的客户端配置**不能带 redis 地址**：显式写了
+#: host/username/password 会让 BigQmtRpcClient._redis_explicit 变成 True，客户端
+#: 于是把事件推送交给 redis 通道（`_event_loop_redis`），而 pipe/shm 的服务端根本
+#: 不往 redis 发 —— 表现出来就是"回调静默消失、日志里什么都不报"（#408）。
+#: 必须与 adapter_factory.SANDBOX_TRANSPORTS 一致，由测试钉住。
+SANDBOX_TRANSPORTS = ("pipe", "shm")
+
 DEPLOYMENTS = ("package", "single_file", "single_file_no_redis")
 
 DEPLOYMENT_LABELS = {
@@ -214,6 +222,8 @@ def render_server_config(answers):
 def render_client_config(answers):
     """bigqmt_signal_trader_client_config.py -- read by the external program."""
     transport = str(answers["transport"])
+    sandbox = transport in SANDBOX_TRANSPORTS
+    formula_enabled = bool(answers.get("formula_enabled", True))
     lines = [
         "# coding: utf-8",
         '"""Client-side private config.',
@@ -227,12 +237,22 @@ def render_client_config(answers):
         "",
         "BIGQMT_REDIS_CONFIG = {",
         '    "transport": %r,' % transport,
-        '    "host": %r,' % str(answers["host"]),
-        '    "port": %d,' % int(answers["port"]),
-        '    "db": %d,' % int(answers["db"]),
-        '    "username": %r,' % str(answers["username"]),
-        '    "password": %r,' % str(answers["password"]),
     ]
+    if sandbox:
+        lines.extend([
+            "    # 沙箱传输（pipe / shm）不写 redis 地址 —— 见 SANDBOX_TRANSPORTS 的注释：",
+            "    # 写了 host 客户端就会把事件推送交给 redis（回调静默消失）。真要 redis",
+            "    # 附加能力（持仓同步等）时手写 host/username/password 到这里。",
+            '    "redis_enabled": False,',
+        ])
+    else:
+        lines.extend([
+            '    "host": %r,' % str(answers["host"]),
+            '    "port": %d,' % int(answers["port"]),
+            '    "db": %d,' % int(answers["db"]),
+            '    "username": %r,' % str(answers["username"]),
+            '    "password": %r,' % str(answers["password"]),
+        ])
     if transport == "zmq":
         port = _zmq_default_port(answers["account_id"])
         lines.extend([
@@ -250,9 +270,10 @@ def render_client_config(answers):
         "",
         "# Reference/history reads go straight to Big QMT's FormulaServer (port",
         "# 58600) instead of over RPC. Every miss falls back to RPC, so an",
-        "# unreachable 58600 changes nothing.",
+        "# unreachable 58600 changes nothing. 关掉它 = 客户端一个 TCP 都不建，",
+        "# 代价是每次读都过桥（profile 里的 BIGQMT_FORMULA_ENABLED=0，本键为准）。",
         "BIGQMT_FORMULA_SERVER_CONFIG = {",
-        '    "enabled": True,',
+        '    "enabled": %s,' % ("True" if formula_enabled else "False"),
         "}",
         "",
         "BIGQMT_LOCAL_CACHE_CONFIG = {",

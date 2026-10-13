@@ -6334,14 +6334,21 @@ class BigQmtXtTrader:
         })
 
     def _has_push_channel(self):
-        """Whether exec events can reach this client at all (#345).
+        """Whether exec events can reach this client at all (#345, #409).
 
-        redis carries them on pub/sub, zmq on the PUB socket; pipe / mysql /
-        shm have no push path, so nothing the server emits after the reply
-        ever arrives.
+        redis carries them on pub/sub, zmq on the PUB socket, and since #409
+        pipe has its own events pipe (server writes, client reads). A pipe
+        client that explicitly configured redis is the exception: an explicit
+        redis block wins in ``_build_quote_push_channel``, so the events pipe
+        is never built and the old #345 rule stands. mysql / shm have no push
+        path at all, so nothing the server emits after the reply ever arrives.
         """
         transport_name = str(getattr(self.client, "transport_name", "redis") or "redis").lower()
-        return transport_name in ("redis", "", "default", "zmq")
+        if transport_name in ("redis", "", "default", "zmq"):
+            return True
+        if transport_name == "pipe":
+            return not bool(getattr(self.client, "_redis_explicit", False))
+        return False
 
     def _submit_async_single(self, seq, args, kwargs):
         """Submit one job and enqueue its outcome. Runs on the order worker."""

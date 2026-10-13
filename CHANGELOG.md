@@ -83,9 +83,29 @@
 
 ### 修复
 
+- **并入上游 #409 之后，两个会"静默丢回调"的坑**（2026-10-13，pipe 实盘升级时逐条
+  追出来的；两条都不会报错，只会让回调消失）：
+
+  - `bigqmt-init` / `bigqmt-env` 生成的**客户端配置不再写 redis 地址**（pipe / shm）。
+    上游 0.3.63 起 pipe 有事件管道（#409），但客户端靠一个信号选路：合并后的配置
+    **或环境变量**里只要有 `host` / `username` / `password` 就当成"有 redis"
+    （`_redis_explicit`），事件推送改走 redis 通道 —— 而 pipe 服务端不往 redis 发，
+    回调静默消失。旧模板无条件写 `"host": "127.0.0.1"`，profile 里的
+    `BIGQMT_REDIS_HOST` 也会被 apply 进环境变量，两处都改了（后者留空）。
+  - **pipe 单文件打包器不再关 `quote_push`**。那条事件管道正是在 quote 推送服务里建
+    的：`quote_push={"enabled": False}` → `_build_quote_subscription_service` 返回
+    None → `_push_channel_sink()` 拿不到通道 → 服务端照跑、客户端一个回调都收不到。
+    原来那行是"pipe 没有推送线"时代的产物，现在恰好会把新的推送线关掉。
+
 - 三处把"shm 不存在"钉死的用例改为断言真实行为：`test_transports.py` 的
   `test_shm_raises_on_use`、`test_transport_selection.py` 与 `test_pipe_transport.py`
   里"shm 不能 drain"的三条断言。它们的反面（未知传输名不能 drain）保留，行为判据没变。
+
+- `BIGQMT_FORMULA_ENABLED` 现在真的生效：profile 里写 0，生成的客户端配置就写
+  `BIGQMT_FORMULA_SERVER_CONFIG = {"enabled": False}`。此前只有配置模块里没写
+  `enabled` 时客户端才读那个环境变量，而生成的配置写死了 `True`，于是"关不掉 58600
+  那条 TCP"——沙箱里这跟 58610 是同一类问题（`#407` 的 `get_instrument` 改成 native
+  SDK 优先后仍受 `native_xtdata_enabled` 守卫，pipe/shm 下不会拨）。
 
 ### 验证与未验证
 

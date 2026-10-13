@@ -121,6 +121,14 @@ class PipeBuildTest(unittest.TestCase):
         self.assertIn("_MODULE_FUNCS = {", source)
         self.assertIn('"bigqmt_signal_trader/xtquant_compat.py":', source)
 
+    def test_pipe_build_keeps_the_push_service_enabled(self):
+        """#409: exec events ride the pipe events channel, and the server only
+        builds that channel when quote_push is on. Disabling it here would
+        leave the client waiting on a pipe nobody writes to -- the server
+        keeps running, every callback silently disappears."""
+        _path, source = build("pipe_flat")
+        self.assertNotIn('BIGQMT_REDIS_CONFIG["quote_push"] = {"enabled": False}', source)
+        self.assertNotIn("quote_push=False", source)
 
 class ConfigBlockTest(unittest.TestCase):
     """The template config ships to users; a contributor's own settings must

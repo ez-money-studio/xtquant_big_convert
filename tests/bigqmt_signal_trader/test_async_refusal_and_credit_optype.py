@@ -284,16 +284,35 @@ class PushlessClientTest(unittest.TestCase):
 
     def test_which_transports_have_a_push_path(self):
         for name, expected in (("redis", True), ("", True), ("zmq", True),
-                               ("pipe", False), ("mysql", False), ("shm", False)):
+                               ("pipe", True),   # #409: events pipe
+                               ("mysql", False), ("shm", False)):
             self.assertEqual(expected, self._trader(name)._has_push_channel(), name)
 
+    def test_pipe_with_an_explicit_redis_block_is_still_pushless(self):
+        """An explicit redis block wins in _build_quote_push_channel, so no
+        events pipe is built and the async worker keeps waiting (#345)."""
+        trader = self._trader("pipe")
+        trader.client._redis_explicit = True
+
+        self.assertFalse(trader._has_push_channel())
+
     def test_an_async_order_waits_for_the_settlement_when_nothing_can_push(self):
+        seen = {}
+        trader = self._trader("mysql")
+        trader.order_stock_result = lambda *a, **kw: seen.setdefault("wait", kw.get("wait_settlement")) or {"order_sys_id": "1"}
+        trader._enqueue_async_outcome = lambda unit: None
+        trader._submit_async_single(1, ("acct", "600000.SH", 23, 100, 11, 10.0, "s", "r"), {})
+        self.assertTrue(seen["wait"])
+
+    def test_an_async_order_on_pipe_keeps_the_fast_path(self):
+        """#409: pipe pushes exec events, so the worker stops waiting for the
+        server's settlement -- the reply comes back as soon as passorder does."""
         seen = {}
         trader = self._trader("pipe")
         trader.order_stock_result = lambda *a, **kw: seen.setdefault("wait", kw.get("wait_settlement")) or {"order_sys_id": "1"}
         trader._enqueue_async_outcome = lambda unit: None
         trader._submit_async_single(1, ("acct", "600000.SH", 23, 100, 11, 10.0, "s", "r"), {})
-        self.assertTrue(seen["wait"])
+        self.assertFalse(seen["wait"])
 
     def test_an_async_order_on_redis_keeps_the_fast_path(self):
         seen = {}

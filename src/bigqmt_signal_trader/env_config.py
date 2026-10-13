@@ -339,6 +339,11 @@ def answers_from_env(values=None, env=None):
         "db": int(str(source.get("BIGQMT_REDIS_DB") or "5").strip()),
         "username": str(source.get("BIGQMT_REDIS_USERNAME") or ""),
         "password": str(source.get("BIGQMT_REDIS_PASSWORD") or ""),
+        # 全推/读取快路径（QMT 的 FormulaServer，58600）。profile 里显式关掉时
+        # 生成出来的客户端配置也必须写 False —— 只留环境变量是不够的：客户端配置
+        # 模块里的 "enabled" 优先级更高，会把环境变量遮住（xtquant_compat 只在
+        # 配置模块没写这个键时才读 BIGQMT_FORMULA_ENABLED）。
+        "formula_enabled": _as_bool(source.get("BIGQMT_FORMULA_ENABLED"), True),
         "allow_order_methods": _as_bool(source.get("BIGQMT_ALLOW_ORDER_METHODS"), False),
         # 终端侧三个可调项（2026-10-12 加，对应 issue #396 的缓解三连）。默认值 =
         # 老行为：回调照发、drain 模式、100ms adjust tick。只有显式配了才变。
