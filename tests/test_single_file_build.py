@@ -27,6 +27,9 @@ TOOLS = os.path.join(ROOT, "tools")
 BUILDERS = {
     "redis": ("build_single_file.py", "utf-8"),
     "no_redis_flat": ("build_no_redis_single_file_flat.py", "gbk"),
+    "shm_flat": ("build_shm_single_file_flat.py", "gbk"),
+    # pipe_flat goes through tools/ascii_minify.py, so its artifact is ASCII.
+    "pipe_flat": ("build_pipe_single_file_flat.py", "ascii"),
 }
 
 _built = {}
@@ -40,6 +43,10 @@ def build(kind):
     handle, out_path = tempfile.mkstemp(suffix="_%s.py" % kind)
     os.close(handle)
     env = dict(os.environ, BIGQMT_BUILD_OUT=out_path)
+    # Deployment overrides must not leak into the shipped template: the tests
+    # below assert the placeholder account id and order RPC disabled.
+    env.pop("BIGQMT_BUILD_ACCOUNT_ID", None)
+    env.pop("BIGQMT_BUILD_ALLOW_ORDER_METHODS", None)
     completed = subprocess.run(
         [sys.executable, os.path.join(TOOLS, script)],
         cwd=TOOLS, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -76,6 +83,43 @@ class BuildsSucceedTest(unittest.TestCase):
             _path, source = build(kind)
             offenders = re.findall(r"^\s*from \S+ import \*\s*$", source, re.M)
             self.assertEqual(offenders, [], "%s build: %s" % (kind, offenders))
+
+
+class PipeBuildTest(unittest.TestCase):
+    """The named-pipe build is the one that goes into a locked-down sandbox.
+
+    It ships through tools/ascii_minify.py because the 2026-10-13 incident was
+    a codec error while loading it: the sandbox reads strategy files with the
+    locale codec (GBK) and its editor re-encodes pasted text, so a build
+    containing one byte above 0x7F is a coin flip. ASCII removes the whole
+    class of failure, and these tests keep it that way.
+    """
+
+    def test_pipe_build_is_pure_ascii(self):
+        path, source = build("pipe_flat")
+        self.assertTrue(source.isascii(), "pipe build contains non-ASCII")
+        with io.open(path, "rb") as stream:
+            self.assertTrue(stream.read().isascii())
+
+    def test_pipe_build_compiles_from_bytes_like_the_qmt_shell(self):
+        """QMT compiles the file bytes with ``<string>`` as the name; that is
+        exactly the call that failed with the codec error."""
+        path, _source = build("pipe_flat")
+        with io.open(path, "rb") as stream:
+            compile(stream.read(), "<string>", "exec")
+
+    def test_pipe_build_forces_pipe_transport(self):
+        _path, source = build("pipe_flat")
+        self.assertIn('"transport": "pipe",', source)
+        self.assertIn('BIGQMT_REDIS_CONFIG["transport"] = "pipe"', source)
+        self.assertIn('BIGQMT_REDIS_CONFIG["redis_enabled"] = False', source)
+
+    def test_pipe_build_still_carries_the_embedded_modules(self):
+        """ascii_minify is a source rewrite; if it ever ate the module table
+        the build would still compile and fail only on load."""
+        _path, source = build("pipe_flat")
+        self.assertIn("_MODULE_FUNCS = {", source)
+        self.assertIn('"bigqmt_signal_trader/xtquant_compat.py":', source)
 
 
 class ConfigBlockTest(unittest.TestCase):

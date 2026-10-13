@@ -11,6 +11,12 @@
 | **`redis`（默认）** | **~10ms** | ✅ | redis-py | 生产默认，也是实测最快的 |
 | `zmq` | ~95ms（drain）| ✅（tcp） | pyzmq | 没有 redis 时的同机方案 |
 | `mysql` | ~50ms+ | ✅ | DBUtils + 驱动 | 兼容兜底（Redis/ZMQ 都不可用时）|
+| `shm` | 0.063ms（自旋泵）| ❌ | 无（标准库 mmap）| **沙箱**：禁 socket、禁 pip、禁 ctypes |
+| `pipe` | ~3-12ms（端到端）| ❌ | 无（ctypes/kernel32）| **沙箱**：禁 socket、禁 pip |
+
+> 前两行的数字是**对着实盘桥**量的端到端 RPC；`shm` 那行是传输层基准
+> （`python tools/bench_latency.py`，不含 QMT handler 的耗时），两行不可直接相减。
+> `pipe` 的数字取自 `transports/pipe_transport.py` 自己的实测记录。
 
 切换传输**只改一个配置字段 `transport`**，业务代码（handlers / `to_jsonable` / `process_request`）零改动。
 
@@ -35,7 +41,7 @@
                         └───┬────────┬─────────┬─────────┘
                  ┌──────────▼┐  ┌────▼───┐  ┌──▼─────┐  ┌──────┐
                  │  Redis     │  │  ZMQ   │  │ MySQL  │  │ SHM  │
-                 │  (默认)    │  │ (低延迟)│  │(兼容)  │  │(stub)│
+                 │  (默认)    │  │ (低延迟)│  │(兼容)  │  │(沙箱)│
                  └────────────┘  └────────┘  └────────┘  └──────┘
 ```
 
@@ -55,7 +61,7 @@
 
 ```python
 BIGQMT_REDIS_CONFIG = {
-    "transport": "zmq",          # 默认 "redis"。可选: redis/zmq/mysql
+    "transport": "zmq",          # 默认 "redis"。可选: redis/zmq/mysql/pipe/shm
     "zmq": {
         "bind_address": "tcp://127.0.0.1:5560",  # Windows 同机使用 TCP 回环
     },
@@ -68,9 +74,22 @@ BIGQMT_REDIS_CONFIG = {
 > **注意（ZMQ）**：ZMQ 支持由 QMT 官方 `adjust` 回调排空请求。低延迟实盘建议设置
 > `rpc_background_threads=False`，并把 `schedule_adjust_interval` 设置为
 > `100nMilliSecond`，避免后台 Python 线程受 QMT 进程 GIL 调度影响。
-> MySQL/SHM 仍会自动启用后台接收线程。
+> MySQL 会自动启用后台接收线程；`shm` 和 pipe 一样实现了非阻塞
+> `drain_request_queue`，所以**缺省即 drain**（显式 `rpc_background_threads=True`
+> 仍然有效）——沙箱部署下这意味着一个线程都不用起。
 > 端口不写时按账号自动派生 `tcp://127.0.0.1:{15560 + 账号%100}`（同机回环）。
 > Linux 同机也可使用 `ipc:///tmp/bigqmt_rpc.sock`。
+
+`transport=shm` 时可额外配置（**两侧必须给出同样的值**）：
+
+```python
+BIGQMT_REDIS_CONFIG["shm"] = {
+    "channel_count": 4,    # 每个并发客户端线程占一条 channel
+    "slot_count": 64,      # 每条环形的槽位数（在途请求上限）
+    "slot_size": 65536,    # 单帧上限；全市场行情帧请调大
+    # 其余可调项见 shm_transport.SharedMemoryTransport.__init__
+}
+```
 
 `transport=mysql` 时可额外配置：
 
@@ -159,6 +178,79 @@ BIGQMT_REDIS_CONFIG = {
 
 注意：sqlite 连接线程绑定，sqlite 测试需 `check_same_thread=False` + `maxshared=0`。
 
+### pipe（`transport: pipe`，沙箱）
+
+给「禁 socket、禁 pip」的终端：Windows 命名管道 `\\.\pipe\bigqmt_rpc_<账号>`，
+用 `ctypes` 调 kernel32 的 `CreateNamedPipeW` / `CreateFileW` / `ReadFile` /
+`WriteFile`。不需要任何第三方包，也不需要端口。
+
+```python
+BIGQMT_REDIS_CONFIG = {
+    "transport": "pipe",
+    "pipe": {"pipe_name": "bigqmt_rpc"},   # 账号 id 自动拼在后面；两侧要一致
+}
+```
+
+**它和 shm 的区别只有两点**，选哪个看沙箱拦到哪一层：
+
+- **能等。** 管道可以阻塞在读上，对面一写就醒，所以不烧 CPU、延迟也稳（端到端实测
+  3-12ms；裸管道往返 0.012ms）。shm 没有可等的内核对象，只能轮询，空闲时受 Windows
+  15.6ms 调度周期限制。
+- **要调 ctypes/kernel32。** 如果券商白名单连 `ctypes` 都拦，pipe 就起不来，这时用 shm
+  （只用标准库 `mmap`）。
+
+其余都一样：只支持同一台机器，没有推送线（执行回调由客户端轮询合成，#372），
+`redis_enabled` 默认不下发、native xtdata（拨 58610）默认关。
+
+单文件部署：`python tools/build_pipe_single_file_flat.py` →
+`src/BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py`（强制 `transport=pipe` + redis 关 +
+全推推送关）。
+
+产物默认再过一遍 `tools/ascii_minify.py`：注释、docstring、空行去掉，字符串字面量里
+剩下的非 ASCII 字符转义成 `\uXXXX`，出来是**纯 ASCII**（1.02MB）。原因是沙箱 QMT 按
+本机编码（GBK）读策略文件、编辑器保存时还会再转一次编码，文件里只要有一个非 ASCII
+字节就可能加载失败 —— 2026-10-13 的
+`SyntaxError: 'gbk' codec can't decode byte 0xfe ... (<string>, line 0)` 就是这个。
+纯 ASCII 在任何编码下读出来都一样。`BIGQMT_BUILD_ASCII=0` 可退回 GBK 产物。
+
+要填真账号不用手改产物：`BIGQMT_BUILD_ACCOUNT_ID=<资金账号>
+BIGQMT_BUILD_ALLOW_ORDER_METHODS=1 BIGQMT_BUILD_OUT=<QMT 的 python 目录>\...py
+python tools/build_pipe_single_file_flat.py`。实现见 `transports/pipe_transport.py`，测试见
+`tests/bigqmt_signal_trader/test_pipe_transport.py`。
+
+### SHM（`transport: shm`，沙箱）
+
+给「禁 socket、禁 pip、并且 ctypes 也可能在白名单外」的终端：一条 channel 一个
+命名 mmap section，里面两条单生产/单消费环形队列，同步只靠 mapping 里的两个计数器
+和槽状态字节。
+
+**它不碰的东西**：不 `import socket`、不 `import ctypes`、不 `open()`、不建句柄、
+不落盘、第三方零依赖。`CreateFileMapping` 不产生路径也不产生连接，所以它不在任何
+网络/文件监控的威胁模型里。这条前提不是写在文档里的——`test_shm_transport.py` 用
+AST 扫源码把它钉住了。
+
+```python
+BIGQMT_REDIS_CONFIG = {
+    "transport": "shm",
+    "shm": {"channel_count": 4, "slot_count": 64, "slot_size": 65536},
+}
+```
+
+**两侧必须一致**：section 名由「账号哈希 + channel 序号」派生，客户端能自己找到
+服务端；但 `channel_count` / `slot_count` / `slot_size` 不写进名字，客户端配置里得
+照抄。不一致时表现为连不上，报错里会带上最后一次失败的原因（layout mismatch 会把
+两侧的数字都打出来）。
+
+**没有推送线**：执行回调由客户端轮询合成（#372），全推行情改用 `get_full_tick`
+轮询；`quote_push` / `download_jobs` / `full_tick_cache` 依赖 redis，一并关掉——
+`tools/build_shm_single_file_flat.py` 生成的单文件里就是这么设的。
+
+**延迟**：传输本身在 60 微秒量级（本机、跨进程、500 次 ~120B 往返：自旋泵
+p50 0.063ms / p99 0.28ms）。真正的下限在等待方式上——没有可等的内核事件对象，
+只能轮询，而 Windows 的 `time.sleep(0.0005)` 实测要睡 15.49ms。所以两端都有个有界
+自旋窗口（`spin_seconds`，默认 50ms）：突发里每次调用几十微秒，长时间空闲不烧 CPU；
+用 `time.sleep` 泵时 p50 就是 15.6ms，那是 OS tick 的地板，不是传输的。
+
 ## 实测延迟对比（同机）
 
 基准脚本：`python bench_transports.py -n 100`
@@ -178,6 +270,10 @@ zmq      n=100  min=0.15   p50=0.21   p90=0.33   p99=20.62   avg=0.43 ms
    空转占满 GIL 饿死接收线程 → RPC 超时
 5. mysql：两端连同一个数据库，schema 自动创建
 6. 切回 redis：删掉 `transport` 字段或设为 `"redis"`，无需改其他配置
+7. shm：`channel_count` / `slot_count` / `slot_size` **两端一致**；`channel_count`
+   就是并发客户端线程的上限（一个环形只能有一个生产者，超了会明确报错而不是写坏数据）
+8. shm/pipe：这两个是「沙箱传输」，`redis_enabled` 默认不下发、native xtdata
+   （会拨 58610）默认关；显式给 `redis_enabled=True` 才会带上 redis 块
 
 ## 文件结构
 
@@ -188,7 +284,13 @@ src/bigqmt_signal_trader/transports/
 ├── redis_transport.py     # Redis 实现（默认，零行为变更）
 ├── zmq_transport.py       # ZMQ ROUTER/DEALER 实现
 ├── mysql_transport.py     # MySQL + DBUtils 连接池
+├── pipe_transport.py      # Windows 命名管道（沙箱：禁 socket）
+├── shm_layout.py          # 共享内存的线上布局（纯常量，可单测）
+├── shm_ring.py            # mmap section + 两条 SPSC 环形
+├── shm_transport.py       # 共享内存传输（沙箱：禁 socket / 禁 ctypes）
 └── factory.py             # build_transport(name, config) 工厂
 ```
 
-测试：`tests/bigqmt_signal_trader/test_transports.py`（9 个测试，含 ZMQ/MySQL 往返）
+测试：`tests/bigqmt_signal_trader/test_transports.py`（工厂与各传输往返）、
+`tests/bigqmt_signal_trader/test_shm_transport.py`（shm 的 layout/环形/往返/超时
+语义/认领与回收，外加 AST 沙箱不变式与 3.6 语法检查）

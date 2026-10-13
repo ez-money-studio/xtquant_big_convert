@@ -290,10 +290,15 @@ def _build_secondary_non_redis(primary, account_id, config, transport_name):
     """A secondary on the primary's transport kind, for zmq (#334).
 
     Only zmq derives a per-account endpoint the client already knows how to
-    find; pipe / mysql / shm have no per-account addressing, so a secondary
-    on them is refused with a log line rather than built on a dead redis
-    client (the pre-#334 failure: ``'NoneType' object has no attribute
-    'pubsub'`` from the secondary's listener threads).
+    find, so a secondary on anything else is refused with a log line rather
+    than built on a dead redis client (the pre-#334 failure: ``'NoneType'
+    object has no attribute 'pubsub'`` from the secondary's listener threads).
+
+    shm is the one exception in principle -- its section name carries the
+    account hash, so a secondary account does get its own wire for free. What
+    is missing is the plumbing that tells the secondary which account it serves
+    and how the client learns about it, which is a feature of its own; until
+    then it is refused like pipe and mysql rather than half-wired.
     """
     from .redis_rpc import RedisPubSubRpcService
 

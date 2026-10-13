@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Build BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py.
+r"""Build BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py.
 
 与 build_no_redis_single_file_flat.py 同机制（flat 真实代码内嵌），但强制
 **命名管道传输**——给「禁 socket、禁 pip、EDR 抓到 connect() 就杀进程」的
@@ -15,9 +15,26 @@
 
 用法：python tools/build_pipe_single_file_flat.py，产物在
 src/BIGQMT_DRYRUN_PIPE_FLAT_ALL_IN_ONE.py（或用 BIGQMT_BUILD_OUT 指定）。
+
+产物默认再经 tools/ascii_minify.py 处理一遍：去掉注释/docstring/空行，并把
+字符串里剩下的非 ASCII 字符转义成 \uXXXX，得到纯 ASCII 文件（1.5MB → 1.0MB）。
+原因是券商 QMT 沙箱按本机编码（GBK）读策略文件，编辑器保存时还会再转一次编码，
+文件里只要有一个非 ASCII 字节就可能炸（2026-10-13：
+``SyntaxError: 'gbk' codec can't decode byte 0xfe ... (<string>, line 0)``）。
+纯 ASCII 文件在任何编码下读出来都一样，这类报错就没有了。
+设 ``BIGQMT_BUILD_ASCII=0`` 可退回原来的 GBK 产物。
+
+本机部署要填真账号时，用下面两个环境变量注入，不用手改产物：
+``BIGQMT_BUILD_ACCOUNT_ID=<资金账号>``、``BIGQMT_BUILD_ALLOW_ORDER_METHODS=1``
+（不设就还是模板里的占位符 / False，CI 断言依赖这一点）。配合
+``BIGQMT_BUILD_OUT`` 可以只生成到 QMT 目录，仓库里的产物保持占位符。
 """
 import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import ascii_minify
 import build_single_file as bsf
 import build_no_redis_single_file_flat as flat
 
@@ -93,6 +110,24 @@ PIPE_TEMPLATE = PIPE_TEMPLATE.replace(
         "pipe_name": "bigqmt_rpc",   # 管道名前缀，账号 id 自动拼在后面；客户端要一致
     },''')
 
+
+def apply_deployment_overrides(template):
+    """把本机部署的账号写进产物（环境变量驱动，默认不动）。"""
+    account = os.environ.get("BIGQMT_BUILD_ACCOUNT_ID", "").strip()
+    if account:
+        assert 'BIGQMT_ACCOUNT_ID = "YOUR_ACCOUNT_ID"' in template
+        template = template.replace(
+            'BIGQMT_ACCOUNT_ID = "YOUR_ACCOUNT_ID"',
+            'BIGQMT_ACCOUNT_ID = "%s"' % account)
+        print("account id injected: %s" % account)
+    if os.environ.get("BIGQMT_BUILD_ALLOW_ORDER_METHODS", "") not in ("", "0"):
+        replaced = template.replace(
+            '"rpc_allow_order_methods": False,', '"rpc_allow_order_methods": True,')
+        assert replaced != template, "rpc_allow_order_methods flag not found"
+        template = replaced
+        print("rpc_allow_order_methods=True injected")
+    return template
+
 # --- 强制块：zmq 换成 pipe ---
 PIPE_TEMPLATE = PIPE_TEMPLATE.replace(
     '''    # Force zmq transport (this is the no-redis version).
@@ -139,9 +174,16 @@ def main():
 
     funcs_block = flat.module_funcs_block(sources, extra)
     template = PIPE_TEMPLATE.replace("__MODULE_FUNCS_BLOCK__", funcs_block)
+    template = apply_deployment_overrides(template)
+
+    encoding = "gbk"
+    if os.environ.get("BIGQMT_BUILD_ASCII", "1") != "0":
+        template, report = ascii_minify.minify(template)
+        encoding = "ascii"
+        print(ascii_minify.format_report(report))
 
     total = sum(len(v) for v in sources.values()) + sum(len(v) for v in extra.values())
-    with open(OUT_PATH, "w", encoding="gbk", newline="\n") as f:
+    with open(OUT_PATH, "w", encoding=encoding, newline="\n") as f:
         f.write(template)
     print("WROTE %s" % OUT_PATH)
     print("embedded files: %d package + %d top-level" % (len(sources), len(extra)))

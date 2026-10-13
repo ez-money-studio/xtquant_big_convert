@@ -3,6 +3,128 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 和 [语义化版本](https://semver.org/)。
 
 
+## [0.3.62] - 2026-10-13
+
+### 升级注意
+
+- 默认仍是 `transport="redis"`，已有部署行为不变。本版只是把 `"shm"` 这个从
+  第一天就注册在工厂里、但一直抛错的传输变成真的。
+- 要用它：`sync` 同步包 + 在**两侧**配置里写 `transport="shm"` 和同样的
+  `shm` 子块。`bigqmt_signal_trader_redis_rpc_runtime.py` 是策略入口加载的顶层
+  模块，常规 `sync + reload` 即可生效。
+
+### 新增
+
+- **共享内存传输 `transport="shm"`**（`transports/shm_transport.py`，替换原先
+  的 stub；配套 `transports/shm_layout.py`、`transports/shm_ring.py`）。一条
+  channel 一个命名 mmap section，里面两条单生产/单消费环形队列，同步只靠
+  mapping 里的两个计数器和槽状态字节。
+
+  它和 pipe 的差别正是选它的理由：**不 import socket、不 import ctypes、不 open()、
+  不建句柄、不落盘**，第三方零依赖，QMT 侧 3.6-safe。`CreateFileMapping` 不产生
+  路径也不产生连接，所以它不在任何网络/文件监控的威胁模型里。
+
+  实现要点（每条都有对应回归）：
+  - 客户端**按线程**认领 channel（一个环形只能有一个生产者），认领用 `flags` 里的
+    nonce 仲裁 —— 同进程两个线程 pid 相同，只有 nonce 能区分；认领失败的那个干净退让。
+  - 服务端按心跳回收死客户端的 channel（先清空环形、再释放认领，新客户端不会丢帧）；
+    服务端重启后 `server_epoch` 变化，等待中的客户端自动重连，不会拿旧 link 去写已被重置的环。
+  - `TransportTimeout` 带 `sent`：请求没进环 vs 已进环（未知结果，禁止盲目重试，#195）；
+    上一轮超时后迟到的响应不会被当成下一个请求的答案。
+  - `drain_request_queue` 是非阻塞实现，所以沙箱部署走 adjust 抽吸，**一个线程都不起**；
+    `factory.transport_supports_drain("shm")` 随之自省为 True。
+
+  实测（本机，跨进程，500 次 ~120B 往返，`tools/bench_latency.py`）：自旋泵
+  p50 **0.063ms** / p99 0.28ms；`time.sleep` 泵 p50 15.6ms —— 后者是 Windows
+  调度 tick（`time.sleep(0.0005)` 实测睡 15.49ms）的地板，不是传输的。所以两端都带
+  一个有界的自旋窗口（`spin_seconds`，默认 50ms）：突发里每次调用几十微秒，长时间
+  空闲不烧 CPU。
+
+- **单文件打包器** `tools/build_shm_single_file_flat.py` → 产物
+  `BIGQMT_DRYRUN_SHM_FLAT_ALL_IN_ONE.py`：flat 真实代码内嵌，强制
+  `transport=shm` + `redis_enabled=False` + 全推推送关（shm 没有推送线，执行回调由
+  客户端轮询合成，#372）+ 下载队列/快照缓存关。给禁 socket 的沙箱一个零外连、
+  且**不依赖 ctypes** 的单一策略文件。
+
+- **纯 ASCII 后处理** `tools/ascii_minify.py`：产物过一次源到源重写 —— 去注释、去
+  docstring（flat 打包把模块塞进 `def _mod_N():` 函数体，模块 docstring 在这里退化成
+  普通字符串语句，一并去掉；空了块补 `pass`）、字符串字面量里剩下的非 ASCII 字符转义
+  成 `\uXXXX`、去掉空行。每一步都自校验：结果 AST 必须与输入一致（两边都去掉裸字符串
+  语句与 `pass`）、必须能编译、必须 0x80 以上字节为 0，否则拒绝产出。
+  `build_pipe_single_file_flat.py` 默认过这道工序（`BIGQMT_BUILD_ASCII=0` 退回 GBK）：
+  pipe 产物 1.49MB → 1.02MB，55 个内嵌模块一个不少。
+
+  起因是 2026-10-13 实盘：沙箱 QMT 按本机编码（GBK）读策略文件，编辑器保存时还会再转
+  一次编码，`SyntaxError: 'gbk' codec can't decode byte 0xfe in position 199496 ...
+  (<string>, line 0)`。纯 ASCII 文件在任何编码下读出来都一样，这类报错就没有了。
+
+- 打包器支持部署注入：`BIGQMT_BUILD_ACCOUNT_ID` 与
+  `BIGQMT_BUILD_ALLOW_ORDER_METHODS=1` 直接写进产物（不设则保持模板占位符，CI 断言
+  依赖这一点），配 `BIGQMT_BUILD_OUT` 可以只生成到 QMT 目录，仓库里的模板保持干净。
+
+### 变更
+
+- **`SANDBOX_TRANSPORTS = ("pipe", "shm")` 成为「禁外连传输」的唯一来源**：redis 块
+  默认不下发、native xtdata（SDK 会拨 58610）默认关，这两处判断从此共用它 —— 它们
+  本来就是同一个意思，而 2026-09-24 那次实盘事故正是两处各写各的、pipe 漏了一处
+  于是照样拨号被杀。`adapter_factory` 里那份是给"手搭 config、不经 runtime"的调用方
+  兜底；包不能反向 import 顶层 runtime 模块（单文件沙箱加载器里会变成加载顺序问题），
+  所以两份并存，由 `test_shm_transport.py` 钉住相等。
+- `rpc_background_threads` 在 shm 下的缺省语义与 pipe/mysql 一致：**缺省即 drain**
+  （显式 True 仍然有效）。
+- **多账号**：shm 的 section 名带账号哈希，**天然按账号寻址**（pipe/mysql 不是），
+  `multi_account.py` 里"pipe / mysql / shm 都没有按账号寻址"那句注释已改正。次级
+  账号的接线本身还没做，暂时照旧拒绝而不是半接。
+
+### 修复
+
+- 三处把"shm 不存在"钉死的用例改为断言真实行为：`test_transports.py` 的
+  `test_shm_raises_on_use`、`test_transport_selection.py` 与 `test_pipe_transport.py`
+  里"shm 不能 drain"的三条断言。它们的反面（未知传输名不能 drain）保留，行为判据没变。
+
+### 验证与未验证
+
+全量离线 2427 collected：**2416 passed / 6 failed / 5 skipped**。6 个失败与改动前
+基线逐条相同（本机存在 `bigqmt_signal_trader_client_config.py`，
+`test_missing_account_id_message` / `test_env_config` / `test_rpc_timeout_default`
+假设它不存在），不是本次引入。新增 47 条用例：`test_shm_transport.py` 37 条
+（layout/ring/往返/drain/超时语义/认领与回收/工厂接线/AST 沙箱不变式/3.6 语法），
+redis 开关与构建器 9 条（shm 的 redis 块默认、子配置读取、native 默认值、两份名单
+相等、打包器 4 条强制项），翻钉处净增 1 条（`test_transport_selection.py` 拆成
+「shm 能 drain」与「未知传输不能 drain」两条）。四个单文件构建器均产出并通过编译，
+shm 版按 GBK 写出（`tests/test_single_file_build.py` 的 BUILDERS 表已含它）。
+
+**未在真沙箱里跑过**：本机不杀 `connect()`、不拦 `mmap`。设计冲着沙箱去，但"沙箱
+接受了"只有沙箱能回答。真机部署后 `transport=shm` 的启动日志不应出现任何 connect
+报错，EDR 应无告警。
+
+pipe 单文件加载失败（2026-10-13 二次）之后的补充验证：
+
+- 全量离线重跑（`.venv`，Python 3.12）：2427 collected，**2413 passed / 9 failed /
+  5 skipped**（226s）。9 条 = 6 条原有环境失败（本机存在
+  `bigqmt_signal_trader_client_config.py` 的 4 条、`test_rpc_timeout_default` 1 条、
+  `test_quote_session_heartbeat` 偶发 1 条）+ 上面那条 GBK 产物地雷的 3 条
+  （`test_option_analytics` / `test_qmt_bundled_xtconstant` 按 UTF-8 扫 `src/`，被
+  `BIGQMT_DRYRUN_NO_REDIS_FLAT_ALL_IN_ONE.py` 绊倒）。pipe 产物改成 ASCII 后不再是
+  地雷的一部分，另外两个 GBK 产物本次没动。
+- 新增 20 条用例：`tests/test_ascii_minify.py` 16 条（去注释与保留编码 cookie、
+  docstring 清空后补 `pass`、裸字符串语句、转义后取值不变、AST 不变、f-string 替换域
+  与 raw 串拒绝、空行处理、CLI），`tests/test_single_file_build.py` 4 条（pipe 产物纯
+  ASCII、按字节 `compile` —— 正是沙箱出事的那次调用形态、强制 pipe、模块表还在），
+  并把 pipe 打包器加进该文件的 BUILDERS 表（读出来按 ascii）。
+- 同一个打包器在 Python 3.10 与 3.12 下产出**逐字节相同**（3.12 把 f-string 拆成
+  `FSTRING_*` token，`ascii_minify` 两条路径都要走得通）。
+- ASCII 只解决"读出来乱码"，不解决沙箱是否接受一个 1.0MB 的策略文件。
+
+一个已知的仓库地雷（不在本次范围内，未改）：`python tools/build_*.py` 会把
+`src/BIGQMT_*_ALL_IN_ONE.py` 写在原地，其中 `no_redis` / `shm` 两个产物是 GBK
+编码（pipe 版现在过 ASCII 后处理，不再是其中之一）；而
+`test_option_analytics.py` / `test_qmt_bundled_xtconstant.py` 会 `os.walk("src")`
+并把每个 `.py` 按 UTF-8 解析，于是**跑过一次构建器之后这 3 条用例必然失败**
+（UnicodeDecodeError）。按仓库惯例这些产物是 gitignore 的本地文件、用后即弃；
+要根治，让那两处扫描按文件声明的编码读、或跳过 `*ALL_IN_ONE*.py`。
+
+
 ## [0.3.61] - 2026-10-01
 
 ### 升级注意

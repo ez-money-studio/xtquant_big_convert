@@ -1486,6 +1486,7 @@ class BigQmtRpcClient:
         if os.environ.get("BIGQMT_ZMQ_PORT"):
             self.zmq_config.setdefault("port", _env_int("BIGQMT_ZMQ_PORT", 0))
         self.mysql_config = dict(merged_redis_config.get("mysql") or {})
+        self.shm_config = dict(merged_redis_config.get("shm") or {})
         self._transport_instance = None  # lazily built by _transport()
         # FormulaServer read fast-path. QMT's C++ quote service (port 58600)
         # answers reference/history reads in ~0.07ms without touching the QMT
@@ -1543,6 +1544,10 @@ class BigQmtRpcClient:
                 # 管道名两侧必须一致，否则客户端连的是另一条线 —— 表现为
                 # 「连不上」而不是「配错了」，最难查的那种。
                 "pipe": dict(config_redis.get("pipe") or {}),
+                # shm 比管道更严：section 名由账号哈希派生，但 slot_count /
+                # slot_size 不写进名字，两侧不一致时客户端连得上、校验不过，
+                # 报的是「no free shm channel」——所以这一块必须透传。
+                "shm": dict(config_redis.get("shm") or {}, **self.shm_config),
             }
             self._transport_instance = build_transport(
                 self.transport_name,

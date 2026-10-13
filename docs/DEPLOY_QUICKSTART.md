@@ -271,6 +271,7 @@ xt_trader.reload_status()                       # 1~2 秒后看这个
 | 服务端找不到配置 | `bigqmt-init` 问「QMT 的 python 目录」时直接回车了，配置写到了当前目录。把 `bigqmt_signal_trader_local_config.py` 挪到 QMT 的 python 目录 |
 | 客户端报 `account_id` 为空 / 连到 127.0.0.1 / 连的是别的账号 | 客户端没找到 `bigqmt_signal_trader_client_config.py`：它靠 import 找，必须和运行的脚本同目录（或在 `PYTHONPATH` 上、或 `BIGQMT_CLIENT_CONFIG_MODULE` 指定）。`python -c` 是从**当前目录**找。找不到时退回服务端那份 `bigqmt_signal_trader_local_config.py`，所以在 QMT 目录里跑能通、换个目录就不通 |
 | QMT 面板报 `import redis` 被拒 | 券商沙箱白名单拦截 → 重跑 `bigqmt-init` 选 `single_file_no_redis`，或纯 ZMQ 入口 |
+| 沙箱拦 socket（EDR 抓 `connect()` 就杀进程） | 两个手跑的打包器，按沙箱拦到哪一层选：`python tools/build_pipe_single_file_flat.py` → 命名管道（要能调 ctypes，但能阻塞等、不轮询）；`python tools/build_shm_single_file_flat.py` → 共享内存（只用标准库 mmap，连 ctypes 都不碰）。两者都零 socket、配置已内置，客户端两侧的 `pipe`/`shm` 子块要一致 |
 | 查询全空但账户有数据 | 账号没对上（服务端 `BIGQMT_ACCOUNT_ID` vs 客户端），或 QMT 不在实盘模式 |
 | 信用账户查出来整行 0 | `bigqmt-init` 的账号类型选了 STOCK，应选 CREDIT |
 | QMT 报错 `unexpected keyword argument 'protocol'` | QMT 自带 redis-py 3.5.3 太旧——升级桥接包到 ≥0.2.9（已修，按版本能力透传） |

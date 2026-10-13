@@ -40,7 +40,7 @@ import bigqmt_signal_trader_redis_rpc_runtime as runtime
 
 class _RuntimeState(unittest.TestCase):
     KEYS = ("REDIS_ENABLED", "RPC_TRANSPORT", "REDIS_HOST", "REDIS_PORT", "REDIS_DB",
-            "REDIS_ENABLED_EXPLICIT", "RPC_PIPE_CONFIG")
+            "REDIS_ENABLED_EXPLICIT", "RPC_PIPE_CONFIG", "RPC_SHM_CONFIG")
 
     def setUp(self):
         self._saved = {k: getattr(runtime, k) for k in self.KEYS}
@@ -264,6 +264,44 @@ class PipeConfigReadingTest(_RuntimeState):
         self.assertTrue(runtime.REDIS_ENABLED_EXPLICIT)
 
 
+class ShmDropsRedisByDefaultTest(_RuntimeState):
+    """shm 与 pipe 同源：存在理由同样是"禁 socket、外连即杀"的终端，所以 redis
+    块默认不下发，本地 xtdata（拨 58610）也默认关。见
+    ``test_shm_transport.py`` 对 native 默认值的用例。"""
+
+    def test_shm_drops_the_block_by_default(self):
+        self._configure(True, "shm", explicit=False)
+
+        self.assertEqual(runtime._redis_block(), {})
+
+    def test_shm_keeps_the_block_when_explicitly_enabled(self):
+        self._configure(True, "shm", explicit=True)
+
+        block = runtime._redis_block()
+
+        self.assertEqual(block["host"], runtime.REDIS_HOST)
+
+    def test_shm_is_in_the_sandbox_transport_set(self):
+        """那份名单也是 native_xtdata 默认值的依据——两处判断共用一个来源。"""
+        self.assertIn("shm", runtime.SANDBOX_TRANSPORTS)
+        self.assertIn("pipe", runtime.SANDBOX_TRANSPORTS)
+
+
+class ShmConfigReadingTest(_RuntimeState):
+    def test_configure_runtime_redis_reads_the_shm_block(self):
+        runtime.configure_runtime_redis(
+            {"transport": "shm", "shm": {"channel_count": 2}})
+
+        self.assertEqual("shm", runtime.RPC_TRANSPORT)
+        self.assertEqual({"channel_count": 2}, runtime.RPC_SHM_CONFIG)
+
+    def test_an_absent_shm_block_leaves_the_default(self):
+        runtime.RPC_SHM_CONFIG = {"slot_count": 8}
+        runtime.configure_runtime_redis({"transport": "zmq"})
+
+        self.assertEqual({"slot_count": 8}, runtime.RPC_SHM_CONFIG)
+
+
 class ModuleLevelReadTest(unittest.TestCase):
     """直接挂 runtime（不经 DRYRUN 外壳）的部署在模块级读配置——漏读
     transport 就是「配了 pipe 实际还在跑 redis」（2026-09-24 实盘根因之一）。
@@ -320,6 +358,43 @@ class PipeBuildTest(unittest.TestCase):
         text = self._read(self.BUILDER)
         self.assertNotIn("no_redis_override_path()", text.replace("flat.no_redis_override_path", ""))
         self.assertIn("named-pipe version", text)
+
+
+class ShmBuildTest(unittest.TestCase):
+    """shm 单文件打包器：同款钉法。产物由
+    tests/test_single_file_build.py 的 BUILDERS 表负责编译验证，这里只管
+    它强制了什么。"""
+
+    BUILDER = os.path.join("tools", "build_shm_single_file_flat.py")
+
+    def _read(self, relative):
+        import io
+
+        with io.open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_the_builder_forces_shm(self):
+        self.assertIn('"transport"] = "shm"', self._read(self.BUILDER))
+
+    def test_the_builder_disables_redis_and_quote_push(self):
+        text = self._read(self.BUILDER)
+        self.assertIn('"redis_enabled"] = False', text)
+        self.assertIn('"quote_push"] = {"enabled": False}', text)
+
+    def test_the_builder_writes_the_shm_sub_block(self):
+        """两侧 layout 必须一致，而 section 名里没有 layout——所以客户端
+        配置要照抄这三个值，模板里必须给出来。"""
+        text = self._read(self.BUILDER)
+        self.assertIn('"shm": {', text)
+        for key in ("channel_count", "slot_count", "slot_size"):
+            self.assertIn('"%s"' % key, text)
+
+    def test_the_builder_does_not_substitute_zmq(self):
+        """shm_transport 在包里、零依赖，不做 no-redis 的 zmq_transport 替换。"""
+        text = self._read(self.BUILDER)
+        self.assertNotIn("no_redis_override_path()",
+                         text.replace("flat.no_redis_override_path", ""))
+        self.assertIn("shared-memory version", text)
 
 
 if __name__ == "__main__":
