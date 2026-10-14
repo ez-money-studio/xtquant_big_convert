@@ -586,6 +586,32 @@ def _config_bool(value, default=False):
     return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
+_SANDBOX_TRANSPORTS = ("pipe", "shm")
+
+
+def _native_xtdata_enabled(config):
+    """要不要让 native xtdata SDK 参与取数（沙箱传输默认关）。
+
+    SDK 每次调用都会拨本机行情服务 58610。在「看到本机 IP 就弹窗、弹完直接停
+    策略」的终端里，一次调用就够把策略打停 —— 2026-10-14 实盘就是这么死的：
+    #407 把 get_instrument 改成 native-first，而策略自己 new provider 时没把
+    沙箱开关传进去（默认 True），于是 get_instrument 一调就弹
+    `非法IP:127.0.0.1:58610`。
+
+    显式写了 `native_xtdata_enabled` 的部署照它自己说的办。这份判断必须与
+    adapter_factory.SANDBOX_TRANSPORTS / redis_rpc_runtime 说同一句话。
+    """
+    rpc_config = dict(config.get("rpc") or {})
+    explicit = rpc_config.get("native_xtdata_enabled")
+    if explicit is None:
+        explicit = config.get("native_xtdata_enabled")
+    if explicit is not None:
+        return bool(explicit)
+    transport = str(
+        rpc_config.get("transport") or config.get("transport") or "redis").lower()
+    return transport not in _SANDBOX_TRANSPORTS
+
+
 _REDIS_TRANSPORT_NAMES = ("redis", "", "default")
 
 
@@ -759,7 +785,10 @@ def _build_rpc_service(context_info, app, config):
     )
     handlers = BigQmtRpcHandlers(
         account_id=account_id,
-        market_data=BigQmtMarketDataProvider(context_info, qmt_api=qmt_api),
+        market_data=BigQmtMarketDataProvider(
+            context_info, qmt_api=qmt_api,
+            native_xtdata_enabled=_native_xtdata_enabled(config),
+        ),
         position_provider=BigQmtPositionProvider(
             get_trade_detail_data_func=qmt_api.get("get_trade_detail_data"),
             account_type=config.get("account_type", "STOCK"),
@@ -1530,7 +1559,10 @@ def _pump_download_jobs(context_info, config):
     if market_data is None:
         from bigqmt_signal_trader.adapters.market_bigqmt import BigQmtMarketDataProvider
 
-        market_data = BigQmtMarketDataProvider(context_info, qmt_api=dict(config.get("qmt_api") or {}))
+        market_data = BigQmtMarketDataProvider(
+            context_info, qmt_api=dict(config.get("qmt_api") or {}),
+            native_xtdata_enabled=_native_xtdata_enabled(config),
+        )
     try:
         from bigqmt_signal_trader.download_jobs import pump_download_jobs
 
