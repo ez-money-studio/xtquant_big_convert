@@ -130,6 +130,16 @@ class PipeBuildTest(unittest.TestCase):
         self.assertNotIn('BIGQMT_REDIS_CONFIG["quote_push"] = {"enabled": False}', source)
         self.assertNotIn("quote_push=False", source)
 
+    def test_flat_builds_ship_a_complete_builtins_table(self):
+        """2026-10-14: QMT's ``import builtins`` can hand back a reduced stub
+        (no ``Exception``), and the old ``dict(_builtins.__dict__)`` copied that
+        stub into every embedded module -- the first ``except Exception``
+        inside one raised NameError and killed the strategy at init."""
+        for kind in ("pipe_flat", "no_redis_flat", "shm_flat"):
+            _path, source = build(kind)
+            self.assertIn("def _complete_builtins():", source, kind)
+            self.assertIn("module_builtins = _complete_builtins()", source, kind)
+
 class ConfigBlockTest(unittest.TestCase):
     """The template config ships to users; a contributor's own settings must
     not ride along. The flat builder arrived carrying a real account id and

@@ -445,11 +445,13 @@ def _resolve_runtime_name(name):
         return _qmt_api[name]
     if name in globals():
         return globals()[name]
-    try:
-        import builtins
-        return getattr(builtins, name)
-    except Exception:
-        return None
+    # 不用 try/except：2026-10-14 实盘里内嵌模块的 builtins 可能是精简过的
+    # （`except Exception` 自己会抛 NameError，把"查不到这个名字"升级成策略崩溃）。
+    # 直接照 Python 的名字解析顺序查：模块的 __builtins__（dict 或 module）。
+    builtins_ns = globals().get("__builtins__")
+    if isinstance(builtins_ns, dict):
+        return builtins_ns.get(name)
+    return getattr(builtins_ns, name, None)
 
 
 def _detect_account_id(context_info=None):

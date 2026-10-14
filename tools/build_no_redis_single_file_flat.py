@@ -286,6 +286,28 @@ Edit BIGQMT_ACCOUNT_ID / BIGQMT_REDIS_CONFIG below before running. The redis
 connection fields in the config are ignored in no-redis mode.
 """
 import builtins as _builtins
+
+
+def _complete_builtins():
+    """内嵌模块用的 builtins 表：以 shell 自己的为准，再补上 import 到的那份。
+
+    2026-10-14 实盘：QMT 给策略文件的 builtins 是完整/可用的，但同一环境里
+    ``import builtins`` 拿到的是**精简 stub** —— 里面没有 ``Exception``。旧实现
+    直接 ``dict(_builtins.__dict__)`` 当每个内嵌模块的 ``__builtins__``，于是内嵌
+    模块里第一个被触发的 ``except Exception`` 就抛 ``NameError: name 'Exception'
+    is not defined``，策略在 init 阶段死掉（表象是
+    ``bridge preload failed: name 'Exception' is not defined``）。
+
+    这里改成两份合并：shell 的 ``__builtins__``（QMT 注入的、以它为准）+ 导入到的
+    模块。任何一份缺东西都能被另一份补上，且全程无 try/except —— 这段代码自己就
+    不能依赖 ``Exception`` 能解析出来。
+    """
+    base = __builtins__
+    if not isinstance(base, dict):
+        base = getattr(base, "__dict__", {}) or {}
+    merged = dict(base)
+    merged.update(dict(getattr(_builtins, "__dict__", {}) or {}))
+    return merged
 import importlib as _importlib
 import os
 import sys
@@ -448,7 +470,7 @@ def _load_local_module(name):
     module.__package__ = name if is_package else name.rpartition(".")[0]
     if is_package:
         module.__path__ = [os.path.dirname(module.__file__)]
-    module_builtins = dict(_builtins.__dict__)
+    module_builtins = _complete_builtins()
     module_builtins["__import__"] = _local_import
     module.__dict__["__builtins__"] = module_builtins
     module.__dict__["__bigqmt_load_local_module"] = _load_local_module
