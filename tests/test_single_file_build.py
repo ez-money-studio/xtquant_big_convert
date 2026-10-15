@@ -85,6 +85,31 @@ class BuildsSucceedTest(unittest.TestCase):
             self.assertEqual(offenders, [], "%s build: %s" % (kind, offenders))
 
 
+class InjectedGlobalsBindingTest(unittest.TestCase):
+    """The single-file shells must bind QMT-injected globals through the single
+    source, never through a hand-copied name list.
+
+    2026-10-15: both builders shipped such a list and it had drifted -- it was
+    missing download_history_data / down_history_data (and query_credit_account,
+    the #202 casualty). The deployed pipe build therefore answered
+    "no download channel on this terminal" for every download RPC, while a probe
+    strategy running in the same terminal proved the door was open: a tick window
+    with 0 local rows had 69 rows after download_history_data returned True.
+    """
+
+    def test_shells_capture_injected_globals_from_the_single_source(self):
+        for kind in BUILDERS:
+            _path, source = build(kind)
+            self.assertIn("qmt_extra = _runtime.capture_qmt_injected_funcs(globals())",
+                          source, "%s build must capture from the single source" % kind)
+
+    def test_shells_do_not_hand_copy_the_name_list(self):
+        for kind in BUILDERS:
+            _path, source = build(kind)
+            self.assertNotIn("qmt_extra = {}", source,
+                             "%s build still builds qmt_extra by hand" % kind)
+
+
 class PipeBuildTest(unittest.TestCase):
     """The named-pipe build is the one that goes into a locked-down sandbox.
 
