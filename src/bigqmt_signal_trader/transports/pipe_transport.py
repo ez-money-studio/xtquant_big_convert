@@ -74,6 +74,19 @@ def _kernel32():
             "zmq for cross-platform deployments." % os.name)
     from ctypes import wintypes
 
+    # 2026-10-15 实盘：策略进程里事件推送管道的 accept 线程抛过
+    # "module 'ctypes.wintypes' has no attribute 'HANDLE'"（同一进程的主线程
+    # 当时是好的，只有那条线程拿到的 wintypes 是半初始化的）。后果不是"少个
+    # 类型"——那条线程建不出管道，整条事件通道就不存在，下单/成交回调静默消失。
+    # 这三个类型只用来声明 restype 和开 DWORD 缓冲区，缺了就用等价的标准类型
+    # 补回去（补在模块对象上，后面 self._wintypes.DWORD() 那些调用点一起受用）。
+    if not hasattr(wintypes, "HANDLE"):
+        wintypes.HANDLE = ctypes.c_void_p
+    if not hasattr(wintypes, "BOOL"):
+        wintypes.BOOL = ctypes.c_int
+    if not hasattr(wintypes, "DWORD"):
+        wintypes.DWORD = ctypes.c_ulong
+
     dll = ctypes.WinDLL("kernel32", use_last_error=True)
     dll.CreateNamedPipeW.restype = wintypes.HANDLE
     dll.CreateFileW.restype = wintypes.HANDLE

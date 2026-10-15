@@ -80,6 +80,41 @@ class PipePathTest(unittest.TestCase):
         self.assertTrue(pipe_path("bigqmt_rpc", "").endswith("bigqmt_rpc"))
 
 
+class Kernel32WintypesFallbackTest(unittest.TestCase):
+    """2026-10-15 实盘：事件推送管道的 accept 线程抛过
+    ``module 'ctypes.wintypes' has no attribute 'HANDLE'``（同一进程的主线程
+    当时是好的，只有那条线程拿到半初始化的模块）。它建不出管道 = 事件通道整个
+    不存在 = 下单/成交回调静默消失，所以 _kernel32 现在自己把缺的类型补齐。"""
+
+    @WINDOWS_ONLY
+    def test_missing_wintypes_types_are_filled_in(self):
+        import ctypes
+
+        from bigqmt_signal_trader.transports import pipe_transport
+
+        class _Partial(object):
+            """半初始化模块的样子：有 BOOL，没有 HANDLE / DWORD。"""
+
+            BOOL = ctypes.c_int
+
+        saved_attr = getattr(ctypes, "wintypes", None)
+        fake = _Partial()
+        ctypes.wintypes = fake
+        sys.modules["ctypes.wintypes"] = fake
+        try:
+            dll, wintypes_out = pipe_transport._kernel32()
+        finally:
+            if saved_attr is not None:
+                ctypes.wintypes = saved_attr
+                sys.modules["ctypes.wintypes"] = saved_attr
+            else:
+                del sys.modules["ctypes.wintypes"]
+        self.assertIs(wintypes_out, fake)
+        self.assertTrue(hasattr(fake, "HANDLE"), "HANDLE 没有被补上")
+        self.assertTrue(hasattr(fake, "DWORD"), "DWORD 没有被补上")
+        self.assertIsNotNone(dll)
+
+
 class ServiceContractTest(unittest.TestCase):
     """传输要能被服务端那套 drain/inline 机制驱动，不只是自己能收发。"""
 
