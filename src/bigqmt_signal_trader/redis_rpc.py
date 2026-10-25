@@ -20,6 +20,7 @@ import uuid
 from .adapters.redis_common import decode_text
 from .code_utils import normalize_stock_code
 from .models import AccountSnapshot, OrderRef, OrderRequest
+from .qmt_globals import QMT_INJECTED_GLOBAL_FUNCS
 
 
 # time.monotonic: unaffected by wall-clock jumps, so a settle deadline
@@ -962,18 +963,7 @@ class BigQmtRpcHandlers:
         return info
 
     # probe 时检查的关键 QMT 运行时全局函数（存在与否决定对应能力可用性）。
-    _PROBE_QMT_GLOBALS = (
-        "passorder", "cancel", "get_trade_detail_data",
-        "download_history_data", "download_history_data2", "down_history_data",
-        "get_history_trade_detail_data", "get_value_by_order_id", "get_last_order_id",
-        "get_ipo_data", "get_new_purchase_limit",
-        "get_assure_contract", "get_enable_short_contract",
-        "get_unclosed_compacts", "get_closed_compacts", "get_debt_contract",
-        "get_option_subject_position", "get_comb_option", "get_hkt_exchange_rate",
-        # 公式族（#374）：全局优先修复后，这里回答「这台终端到底注没注入」。
-        "call_formula", "subscribe_formula", "unsubscribe_formula",
-        "get_formula_result", "gen_factor_index",
-    )
+    _PROBE_QMT_GLOBALS = QMT_INJECTED_GLOBAL_FUNCS
 
     # probe 时抽查的 ContextInfo 方法。
     # 板块写入那几个是为 issue #142 加的：读取（get_sector_list /
@@ -1018,6 +1008,10 @@ class BigQmtRpcHandlers:
         }
         for name in self._PROBE_QMT_GLOBALS:
             info["qmt_globals"][name] = callable(self.qmt_api.get(name))
+        info["qmt_global_counts"] = {
+            "expected": len(self._PROBE_QMT_GLOBALS),
+            "bound": sum(1 for value in info["qmt_globals"].values() if value),
+        }
         context_info = getattr(self.market_data, "context_info", None)
         for name in self._PROBE_CONTEXT_METHODS:
             info["contextinfo_methods"][name] = callable(getattr(context_info, name, None))

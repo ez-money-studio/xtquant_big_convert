@@ -517,7 +517,7 @@ BIGQMT_REDIS_CONFIG = {
 
 ```python
 xtdata.get_deployment_info()
-# {'version': '0.3.68',
+# {'version': '0.3.70',
 #  'package_dir':    'D:\...\python\bigqmt_signal_trader',
 #  'qmt_python_dir': 'D:\...\python',
 #  'strategy_dir':   'D:\...\python',
@@ -1434,7 +1434,7 @@ QMT **模型交易**里新建 Python 模型，加载并运行 `BIGQMT_REDIS_DRYR
 python -c "from bigqmt_signal_trader.xtquant_compat import configure, xtdata; configure(); print(xtdata.get_deployment_info())"
 ```
 
-打出 `{'version': '0.3.68', 'python_version': '3.12.10', 'runtime': {'profile': 'python312', ...}, ...}`
+打出 `{'version': '0.3.70', 'python_version': '3.12.10', 'runtime': {'profile': 'python312', ...}, ...}`
 就说明新版包已在 QMT 的 3.12 进程中生效。这是**服务端**在跑的版本和目录，
 不是外部客户端的 Python。再拉一次行情：
 

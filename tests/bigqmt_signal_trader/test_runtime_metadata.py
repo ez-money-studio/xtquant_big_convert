@@ -43,6 +43,11 @@ class RuntimeMetadataTest(unittest.TestCase):
                          _runtime_metadata()["python_version"])
         self.assertEqual(capabilities["runtime"]["profile"],
                          _runtime_metadata()["profile"])
+        self.assertEqual(
+            capabilities["qmt_global_counts"]["expected"],
+            len(BigQmtRpcHandlers._PROBE_QMT_GLOBALS),
+        )
+        self.assertEqual(capabilities["qmt_global_counts"]["bound"], 0)
 
 
 if __name__ == "__main__":

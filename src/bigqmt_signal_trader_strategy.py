@@ -492,53 +492,21 @@ def _detect_account_id(context_info=None):
     return ""
 
 
-# Official Big QMT runtime-injected global functions (like passorder) that we
-# expose over RPC. These are not ContextInfo methods and not in the IDE stub;
-# QMT injects them into the process global namespace at startup. We resolve
-# them lazily so the module imports cleanly outside QMT (tests/dev).
-_EXTRA_QMT_GLOBAL_FUNCS = (
-    "get_history_trade_detail_data",  # 历史成交明细
-    "get_value_by_order_id",          # 按 order_id 查委托详情
-    "get_last_order_id",              # 最近委托号
-    "get_ipo_data",                   # 新股数据
-    "get_new_purchase_limit",         # 新股申购额度
-    "get_assure_contract",            # 融资标的（担保品）合约
-    "get_enable_short_contract",      # 融券标的合约
-    "get_unclosed_compacts",          # 未平仓合约（负债）
-    "get_closed_compacts",            # 已平仓合约
-    "get_debt_contract",              # 负债合约
-    # 信用账户明细，查柜台的那条路。异步：结果只从 credit_account_callback
-    # 出来，见下面的 credit_account_callback 和 #202。
-    "query_credit_account",
-    "get_option_subject_position",    # 期权标的持仓
-    "get_comb_option",                # 组合期权
-    "get_hkt_exchange_rate",          # 港股通汇率
-    # download_history_data / download_history_data2 are global functions
-    # injected by QMT (not ContextInfo methods), same as passorder. They
-    # must be captured here so the adapter can call them. Issue #32.
-    "download_history_data",
-    "download_history_data2",
-    # Some QMT builds expose only down_history_data (single stock, same 4-arg
-    # signature). Issue #54: without it the download RPC is a silent no-op and
-    # reads only ever return the latest day.
-    "down_history_data",
-    # 公式族也是运行时全局（官方文档原型就是全局函数，#374）：不在捕获名单里
-    # 的话 qmt_api 永远拿不到，适配器的「全局优先」就没有可优先的对象。
-    "call_formula",
-    "subscribe_formula",
-    "unsubscribe_formula",
-    "get_formula_result",
-    "gen_factor_index",
-)
+# Official QMT runtime-injected global functions. The canonical registry is
+# shared with probe_capabilities so capture and diagnostics cannot drift.
+if _load_bridge_module is not None:
+    _qmt_globals = _load_bridge_module("bigqmt_signal_trader.qmt_globals")
+else:
+    from bigqmt_signal_trader import qmt_globals as _qmt_globals
+
+_EXTRA_QMT_GLOBAL_FUNCS = _qmt_globals.QMT_EXTRA_GLOBAL_FUNCS
+_QMT_INJECTED_GLOBAL_FUNCS = _qmt_globals.QMT_INJECTED_GLOBAL_FUNCS
 
 # The full set of QMT-injected global function names (the three trade entry
 # points plus the extras above). Mount sites (the RPC runtime's direct mount)
 # capture whatever is callable from their own exec namespace via
 # capture_qmt_injected_funcs() -- this is the single source for that list; do
 # not hand-copy the names elsewhere.
-_QMT_INJECTED_GLOBAL_FUNCS = (
-    "passorder", "cancel", "get_trade_detail_data",
-) + _EXTRA_QMT_GLOBAL_FUNCS
 
 
 def capture_qmt_injected_funcs(namespace):

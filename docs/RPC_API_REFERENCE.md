@@ -25,6 +25,20 @@
 
 ---
 
+## QMT 2.1.33 全局函数覆盖
+
+`probe_capabilities` 检查统一的 55 项候选名单，来源是
+`bigqmt_signal_trader/qmt_globals.py`。覆盖核心交易、历史/IPO/融资融券查询、
+算法下单与任务、篮子、批量公式、板块下载、扩展数据和 VBA 引用函数。
+
+完整新增接口和桥支持边界见
+[`QMT_250807_NEW_APIS.md`](QMT_250807_NEW_APIS.md)。
+
+捕获只表示入口拿到了 callable，不等于 RPC 已开放。新增的算法下单、任务操作和篮子写入
+尚未进入 `ORDER_METHODS`，不能通过 `client.call` 直接绕过下单开关。
+
+---
+
 ## 1. 系统
 
 ### `ping`

@@ -28,6 +28,9 @@ interpreter actually executing the bridge.
 - The bridge's `src/xtquant/xtconstant.py` has the same 538 definitions and
   values as the new native QMT constants. No trading enum was renamed or
   renumbered.
+- The runtime global capture list now contains 55 candidates across eight
+  groups; `probe_capabilities` probes the same canonical list and reports
+  expected/bound counts. See `QMT_250807_NEW_APIS.md`.
 - New native `XtOrder`, `XtTrade`, `XtPosition` and `XtAsset` models add
   `direction`, `offset_flag`, `secu_account`, `instrument_name`,
   `commission`, position analytics and `fetch_balance`. The bridge already

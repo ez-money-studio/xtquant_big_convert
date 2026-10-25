@@ -111,13 +111,15 @@ $env:PYTHONPATH = "D:\gjzqqmt\xtquant_big_convert\src;$env:PYTHONPATH"
 | MiniQMT 调用 | 兼容状态 | 说明 |
 |---|---|---|
 | `XtQuantTrader(path, session_id)` | 已兼容 | 构造本地 RPC 客户端，不连接 MiniQMT |
-| `register_callback()` | 已兼容 | 保存 callback；RPC 暂不推送回调 |
+| `register_callback()` | 已兼容 | 保存 callback；order/trade/error 回调由 pipe 事件通道推送 |
 | `start()` / `connect()` / `subscribe()` | 已兼容 | 返回 `0`，`subscribe()` 会补账号 |
 | `query_stock_asset(acc)` | 已兼容 | 返回对象含 `cash`、`available_cash`、`total_asset`、`market_value` |
 | `query_stock_positions(acc)` | 已兼容 | 返回对象列表，含 `stock_code`、`volume`、`can_use_volume`、`avg_price`、`price` |
 | `query_stock_position(acc, code)` | 已兼容 | 返回单只持仓对象或 `None` |
 | `query_stock_orders(acc, cancelable_only=False)` | 已兼容 | 返回对象列表，含 `order_type`、`order_status`、`order_volume`、`traded_volume`、`order_sysid` |
 | `query_stock_trades(acc)` | 已兼容 | 返回对象列表，含 `order_type`、`traded_volume`、`traded_price` |
+| `query_secu_account(acc)` | 已兼容 | 查询股东账户 |
+| `query_position_statistics(acc)` | 已兼容 | 期货持仓统计 |
 | `order_stock()` / `order_stock_async()` | 已兼容 | 需要大 QMT 本地配置打开 `rpc_allow_order_methods=True` |
 | `cancel_order_stock_sysid()` | 已兼容 | 需要大 QMT 本地配置打开 `rpc_allow_order_methods=True` |
 | `xtdata.get_full_tick(codes)` | 已兼容 | 默认直接 RPC 调用；支持单票、ETF、`["SH", "SZ"]` 全市场；可选打开 Redis 快照缓存 |
@@ -139,7 +141,22 @@ $env:PYTHONPATH = "D:\gjzqqmt\xtquant_big_convert\src;$env:PYTHONPATH"
 | `xtdata.get_financial_data(...)` / `download_financial_data(...)` | 已接入 RPC | 支持 DataFrame 返回值序列化 |
 | `xtdata.call_formula(...)` / `subscribe_formula(...)` / `unsubscribe_formula(...)` / `get_formula_result(...)` | 已接入 RPC | 对应截图里的模型调用/订阅能力，依赖大 QMT `ContextInfo` 是否支持 |
 | `xtdata.gen_factor_index(...)` | 已接入 RPC | 对应生成因子数据，依赖大 QMT `ContextInfo` 是否支持 |
-| `query_ipo_data()` / `query_new_purchase_limit()` | 占位兼容 | 当前返回空结果，打新需要后续补大 QMT 等价能力 |
+| `query_ipo_data()` / `query_new_purchase_limit()` | 已兼容 | 经 QMT 新股全局函数查询 |
+
+### xtquant 250807 新接口边界
+
+完整清单见 [`QMT_250807_NEW_APIS.md`](QMT_250807_NEW_APIS.md)。当前结论：
+
+- **已支持**：`query_secu_account`、`query_position_statistics`，以及新版委托/成交字段。
+- **全局函数已捕获但未开放 RPC**：算法下单、任务暂停/恢复/撤销、篮子读写、
+  两融最大可下量、批量公式、扩展数据/VBA、板块下载。
+- **明确未支持**：银证转账、银行信息/余额/流水、资金与证券划转、CTP 内转、
+  智能算法下单与任务、SMT/约券、通用 `query_data/export_data`、
+  外部成交导入，以及四类新异步回调。
+- **原生 xtdata 新增但不在大 QMT 内置进程保证可用**：行情服务连接/状态、
+  公式管理、交易时段、Level2 千档、表格/Feather、可转债扩展数据等。
+
+不要用原生 `xtdata` 的新增接口是否存在于 Python 包，来推断桥是否支持它。
 
 ## 下单开关
 

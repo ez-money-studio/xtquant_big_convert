@@ -89,6 +89,34 @@ class NoHandCopiedListTest(unittest.TestCase):
         self.assertIn("query_credit_account", _EXTRA_QMT_GLOBAL_FUNCS)
         self.assertIn("query_credit_account", _QMT_INJECTED_GLOBAL_FUNCS)
 
+    def test_new_qmt_globals_are_captured_and_probed(self):
+        from bigqmt_signal_trader.redis_rpc import BigQmtRpcHandlers
+
+        expected = {
+            "algo_passorder",
+            "smart_algo_passorder",
+            "get_smart_algo_param",
+            "cancel_task",
+            "pause_task",
+            "resume_task",
+            "get_basket",
+            "set_basket",
+            "query_credit_opvolume",
+            "call_formula_batch",
+            "download_sector_data",
+            "ext_data",
+            "get_factor_value",
+            "call_vba",
+            "is_suspended_stock",
+            "get_etf_info",
+            "get_etf_iopv",
+            "create_extend_data",
+            "set_extend_data_value",
+        }
+        self.assertTrue(expected.issubset(set(_QMT_INJECTED_GLOBAL_FUNCS)))
+        self.assertEqual(set(BigQmtRpcHandlers._PROBE_QMT_GLOBALS),
+                         set(_QMT_INJECTED_GLOBAL_FUNCS))
+
     def test_capture_picks_up_everything_the_single_source_lists(self):
         """把整份名单摆进一个假命名空间，捕获必须一个不落。"""
         namespace = dict((name, lambda *a, **k: None)
