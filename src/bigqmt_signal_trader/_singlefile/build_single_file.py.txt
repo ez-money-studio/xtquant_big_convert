@@ -387,16 +387,15 @@ except Exception as account_config_error:
         _runtime.configure_runtime_account(account_id)
 
 try:
-    qmt_extra = {}
-    for function_name in (
-        "get_history_trade_detail_data", "get_value_by_order_id", "get_last_order_id",
-        "get_ipo_data", "get_new_purchase_limit", "get_assure_contract",
-        "get_enable_short_contract", "get_unclosed_compacts", "get_closed_compacts",
-        "get_debt_contract", "get_option_subject_position", "get_comb_option",
-        "get_hkt_exchange_rate",
-    ):
-        if function_name in globals():
-            qmt_extra[function_name] = globals()[function_name]
+    # QMT injects these into THIS file's namespace only, so the single source
+    # (capture_qmt_injected_funcs) has to be handed the entry's own globals().
+    # A hand-copied list drifts: the one here was missing
+    # download_history_data / down_history_data / query_credit_account, which
+    # made the bridge answer "no download channel on this terminal" while the
+    # terminal had the download door open all along (2026-10-15, reproduced
+    # live with a probe strategy: 0 local tick rows -> 69 after a download).
+    qmt_extra = _runtime.capture_qmt_injected_funcs(globals())
+    print("[bigqmt_shell] qmt-injected globals bound=%s" % sorted(qmt_extra))
     _runtime.bind_runtime_api(
         passorder_func=globals().get("passorder"),
         cancel_func=globals().get("cancel"),

@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-`xtquant-big-convert` bridges Big QMT's built-in Python to external programs over Redis/ZMQ, and exposes a MiniQMT (`xtquant`)-compatible API on top. Python >=3.8; QMT-embedded code must stay 3.6-safe.
+`xtquant-big-convert` bridges Big QMT's built-in Python to external programs over Redis/ZMQ, and exposes a MiniQMT (`xtquant`)-compatible API on top. External clients require Python >=3.8. QMT-embedded code must remain 3.6-safe by default; the 3.12 QMT runtime is a second supported target, not a reason to remove the 3.6 profile for other terminals.
 
 ## Project Structure & Module Organization
 
@@ -25,7 +25,7 @@ python test_all_apis.py         # live RPC tests; needs QMT + Redis running
 
 - 4-space indent; `snake_case` modules/functions/variables, `PascalCase` classes, `UPPER_SNAKE_CASE` constants.
 - Keep the `# coding: utf-8` header on modules. Docstrings explain *why*, and cite issue numbers for behavioral decisions.
-- No linter/formatter is configured; match surrounding style. Avoid 3.8+-only syntax in code shared with QMT's python36.
+- No linter/formatter is configured; match surrounding style. Avoid 3.8+-only syntax in code shared with QMT's python36. Code that is only built for the 3.12 profile may use newer syntax, but must be tested against that profile explicitly.
 - Tests use `unittest` cases run under pytest: `tests/**/test_*.py`, methods `test_*`.
 
 ## Testing Guidelines
@@ -41,5 +41,12 @@ PRs should describe the behavior change, list verification performed, and link i
 ## Security & Configuration Tips
 
 Never commit account ids, Redis passwords, or QMT paths: keep `*_local_config.py` / `*_client_config.py` untracked (`*.local.py` is ignored). Remote order methods stay off unless `rpc_allow_order_methods=True` is set deliberately. The Redis upper bound in `pyproject.toml` (`<8.0.0`) is intentional and pinned by `tests/test_dependency_constraints.py`.
+
+**Deployment policy (explicit user decision, 2026-10-25): this QMT deployment
+uses the Windows named-pipe transport only. Do not propose or switch it to
+Redis or ZMQ; both have been ruled out by the user multiple times.** Named
+pipe servers must grant the interactive local user read/write access so the
+normal, non-elevated trading client can connect. Only revisit this decision
+if the user explicitly asks to evaluate Redis or ZMQ again.
 
 Local secrets live in `.env.<profile>` (`.env.dev`, `.env.prod`), both gitignored; only `.env.template` is committed. `bigqmt_signal_trader/env_config.py` parses them, `bigqmt-env` regenerates the two config files, and `BIGQMT_ENV_DISABLE=1` switches discovery off for harnesses. Keep `init_config` out of `env_config`: the single-file builders refuse to embed `init_config.py`, and their check is a plain text scan.

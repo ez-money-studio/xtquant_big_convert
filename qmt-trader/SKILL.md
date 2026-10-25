@@ -74,8 +74,9 @@ BIGQMT_REDIS_CONFIG = {
 > zmq 配 `True` 是 592.9ms —— 慢 37 倍。原因是 zmq / pipe 的后台线程每次都要付
 > 跨线程 GIL 交接（约一个 adjust tick），redis 的 `brpop` 唤醒没有这一步。
 >
-> 切 zmq：配置里加 `"transport": "zmq"` 并把 `rpc_background_threads` 改 `False`
-> （QMT 端需装 pyzmq 19.0.2，Python 3.6 最后支持的版本）。
+> 切 zmq：配置里加 `"transport": "zmq"` 并把 `rpc_background_threads` 改 `False`。
+> 旧 QMT 的 Python 3.6 需装 pyzmq 19.0.2；QMT 3.12 应安装支持 cp312 的现代
+> cp312 wheel，不能复用旧目录里的 `.pyd`。
 
 ### 第 4 步：在 QMT 策略编辑器运行入口
 

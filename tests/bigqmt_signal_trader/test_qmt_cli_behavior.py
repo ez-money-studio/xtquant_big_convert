@@ -213,6 +213,43 @@ class KlineStatsTest(CliTestBase):
         self.assertEqual(stats["low"], 8.5)    # closes 的最小值是 9.0
 
 
+class FinancialShapeTest(CliTestBase):
+    def test_series_is_wrapped_under_the_requested_code(self):
+        pd = __import__("pandas")
+        series = pd.Series(
+            [123.0, 456.0],
+            index=pd.Index(["NETPROFIT", "TOTALASSETS"], name="field"),
+            name=0,
+        )
+        xtdata = mock.Mock()
+        xtdata.get_financial_data.return_value = series
+        args = argparse.Namespace(
+            codes=["000001.SZ"], tables="Capital", start=None, end=None,
+            table=False,
+        )
+        with mock.patch.object(self.cli, "_init", return_value=(None, xtdata, None)):
+            out = self._run(self.cli.cmd_financial, args)
+
+        rows = out["data"]["financial"]["000001.SZ"]
+        self.assertEqual({row["field"]: row["0"] for row in rows},
+                         {"NETPROFIT": 123.0, "TOTALASSETS": 456.0})
+
+    def test_dict_of_frames_keeps_the_miniqmt_shape(self):
+        pd = __import__("pandas")
+        frame = pd.DataFrame({"NETPROFIT": [123.0]}, index=[0])
+        xtdata = mock.Mock()
+        xtdata.get_financial_data.return_value = {"000001.SZ": frame}
+        args = argparse.Namespace(
+            codes=["000001.SZ"], tables="Capital", start=None, end=None,
+            table=False,
+        )
+        with mock.patch.object(self.cli, "_init", return_value=(None, xtdata, None)):
+            out = self._run(self.cli.cmd_financial, args)
+
+        self.assertEqual(out["data"]["financial"]["000001.SZ"][0]["NETPROFIT"],
+                         123.0)
+
+
 def _trade_row(**kw):
     """一行成交, 字段名照 xtquant_compat._trade_from_dict 构造的对象来。"""
     base = dict(

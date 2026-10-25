@@ -517,11 +517,12 @@ BIGQMT_REDIS_CONFIG = {
 
 ```python
 xtdata.get_deployment_info()
-# {'version': '0.2.15',
+# {'version': '0.3.68',
 #  'package_dir':    'D:\...\python\bigqmt_signal_trader',
 #  'qmt_python_dir': 'D:\...\python',
 #  'strategy_dir':   'D:\...\python',
-#  'python_version': '3.6.8'}
+#  'python_version': '3.12.10',
+#  'runtime': {'profile': 'python312', 'abi': '...cp312-win_amd64.pyd', ...}}
 ```
 
 **版本不一致时，连接会告警：**
@@ -1124,7 +1125,7 @@ xt_trader.cancel_order_stock(acc, order_id)   # 撤单送回的是原始字符�
 | 部分 | 运行位置 | Python | 装什么 |
 |------|---------|--------|--------|
 | **客户端**（外部程序）| 你的开发机 | **3.8 ~ 3.13** | `pip install xtquant-big-convert` |
-| **服务端**（QMT 内）| QMT 的 `bin.x64/python.exe` | 3.6（QMT 自带，改不了）| 按传输装 1 个包 |
+| **服务端**（QMT 内）| 新版 `bin.x64\python312\python.exe`；旧版 `python36` | **3.12 / 3.6** | 按传输装 1 个包 |
 
 ### 版本约束（装之前先看这个）
 
@@ -1147,7 +1148,7 @@ xt_trader.cancel_order_stock(acc, order_id)   # 撤单送回的是原始字符�
 `RPUSH` 会被重发 —— 一次下单可能派发两次（#245）。服务端从 0.3.29 起按
 `request_id` 去重兜住了这条，但没有理由把默认重试次数从 3 抬到 10。
 
-**QMT 端（服务端）的 redis 更要小心:它是 Python 3.6。** redis-py 从 4.4 起要求
+**旧 QMT 端（服务端）的 redis 更要小心:它是 Python 3.6。** redis-py 从 4.4 起要求
 Python 3.7+，所以 QMT 里能装的最高是 **4.3.x**；QMT 自带的是 3.5.3，本项目按版本
 能力透传参数，能直接用。在 QMT 目录里 `pip install -U redis` 是自找麻烦 ——
 issue #71「最新代码 QMT 报错」就是给 3.5.3 传了它不认识的 `protocol` 参数导致的
@@ -1186,11 +1187,19 @@ configure()
 print(xtdata.get_full_tick(["000001.SZ"]))
 ```
 
-### B. 服务端（QMT 内 Python 3.6）
+### B. 服务端（QMT 内 Python 3.6 / 3.12）
 
 > **前置：先在 QMT 界面里下载 Python 组件。** 全新安装的终端 `bin.x64\` 下**没有 `Lib\` 目录**，也没有 `python.exe`——那是 Python 组件带来的，不是终端自带的，**不要自己手动创建 `Lib\`**。在 QMT 客户端里下载安装该组件后，`bin.x64\Lib\site-packages\` 才会出现，下面的路径才成立。具体入口见迅投官方文档。
 
-QMT 自带 Python 3.6（`bin.x64/python.exe`），**只需按你选的传输装对应依赖**：
+旧版 QMT 使用 `bin.x64\pythonw.exe` / `python36.dll`；新版 QMT 2.1.33 起使用
+`bin.x64\python312\python.exe`。先确认真实版本，旧 `python36.dll` 还在不代表
+QMT 仍在使用它：
+
+```powershell
+& "D:\...\bin.x64\python312\python.exe" -c "import sys; print(sys.version)"
+```
+
+确认后，**按你选的传输给这个解释器装对应依赖**：
 
 | 传输 | 服务端需要的包 | 客户端需要的包 |
 |------|--------------|--------------|
@@ -1221,7 +1230,10 @@ cd D:\QMT交易端
 .\bin.x64\python.exe -c "import pymysql; from dbutils.pooled_db import PooledDB; print('OK')"
 ```
 
-> **pyzmq 特殊说明**：包含 C 扩展，不能直接拷贝。Python 3.6 需装 `pyzmq==19.0.2`（最后一个支持 3.6 的版本）。如果 SSL 装不上，可下载对应 wheel 手动 `pip install xxx.whl`。
+> **pyzmq 特殊说明**：包含 C 扩展，不能直接拷贝。Python 3.6 需装
+> `pyzmq==19.0.2`；Python 3.12 使用支持 cp312 的现代版本。当前 QMT 3.12
+> 没有预装 pyzmq/redis，只有 pipe/shm 可以零依赖运行；要用 zmq/redis 必须
+> 安装到 `bin.x64\python312\Lib\site-packages`，不能复用旧目录的 `.pyd`。
 
 ### C. Redis 服务本身（Windows 上怎么来）
 
@@ -1275,7 +1287,10 @@ BIGQMT_REDIS_CONFIG = {
 
 ### 先看这张表：什么文件放哪、谁放
 
-整条链路只有三样东西：**QMT 里的服务端**（一个包 + 三个顶层文件，跑在 QMT 自带的 Python 3.6 里）、**外部的客户端**（pip 装的包，跑在你自己的 Python 里）、**中间的 Redis**（或同机 ZMQ）。两个 Python 互不相通：客户端能 `pip install`，QMT 那个不能（旧 OpenSSL），所以服务端文件靠**拷**。
+整条链路只有三样东西：**QMT 里的服务端**（一个包 + 三个顶层文件，跑在 QMT 自带
+的 Python 3.6 或 3.12 里）、**外部的客户端**（pip 装的包，跑在你自己的 Python
+里）、**中间的 Redis**（或同机 ZMQ）。两个 Python 互不相通，服务端文件仍靠**拷**；
+新版 3.12 可以安装现代 cp312 wheel，但 QMT 沙箱的导入白名单仍可能限制第三方包。
 
 | 文件 | 放哪 | 谁放 |
 |---|---|---|
@@ -1419,7 +1434,9 @@ QMT **模型交易**里新建 Python 模型，加载并运行 `BIGQMT_REDIS_DRYR
 python -c "from bigqmt_signal_trader.xtquant_compat import configure, xtdata; configure(); print(xtdata.get_deployment_info())"
 ```
 
-打出 `{'version': '0.3.xx', 'package_dir': 'D:\\...\\python\\bigqmt_signal_trader', 'python_version': '3.6.8', ...}` 就通了——这是**服务端**在跑的版本和目录。再拉一次行情：
+打出 `{'version': '0.3.68', 'python_version': '3.12.10', 'runtime': {'profile': 'python312', ...}, ...}`
+就说明新版包已在 QMT 的 3.12 进程中生效。这是**服务端**在跑的版本和目录，
+不是外部客户端的 Python。再拉一次行情：
 
 ```powershell
 python -c "from bigqmt_signal_trader.xtquant_compat import configure, xtdata; configure(); print(xtdata.get_full_tick(['000001.SZ']))"

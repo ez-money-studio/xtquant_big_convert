@@ -286,6 +286,28 @@ Edit BIGQMT_ACCOUNT_ID / BIGQMT_REDIS_CONFIG below before running. The redis
 connection fields in the config are ignored in no-redis mode.
 """
 import builtins as _builtins
+
+
+def _complete_builtins():
+    """内嵌模块用的 builtins 表：以 shell 自己的为准，再补上 import 到的那份。
+
+    2026-10-14 实盘：QMT 给策略文件的 builtins 是完整/可用的，但同一环境里
+    ``import builtins`` 拿到的是**精简 stub** —— 里面没有 ``Exception``。旧实现
+    直接 ``dict(_builtins.__dict__)`` 当每个内嵌模块的 ``__builtins__``，于是内嵌
+    模块里第一个被触发的 ``except Exception`` 就抛 ``NameError: name 'Exception'
+    is not defined``，策略在 init 阶段死掉（表象是
+    ``bridge preload failed: name 'Exception' is not defined``）。
+
+    这里改成两份合并：shell 的 ``__builtins__``（QMT 注入的、以它为准）+ 导入到的
+    模块。任何一份缺东西都能被另一份补上，且全程无 try/except —— 这段代码自己就
+    不能依赖 ``Exception`` 能解析出来。
+    """
+    base = __builtins__
+    if not isinstance(base, dict):
+        base = getattr(base, "__dict__", {}) or {}
+    merged = dict(base)
+    merged.update(dict(getattr(_builtins, "__dict__", {}) or {}))
+    return merged
 import importlib as _importlib
 import os
 import sys
@@ -448,7 +470,7 @@ def _load_local_module(name):
     module.__package__ = name if is_package else name.rpartition(".")[0]
     if is_package:
         module.__path__ = [os.path.dirname(module.__file__)]
-    module_builtins = dict(_builtins.__dict__)
+    module_builtins = _complete_builtins()
     module_builtins["__import__"] = _local_import
     module.__dict__["__builtins__"] = module_builtins
     module.__dict__["__bigqmt_load_local_module"] = _load_local_module
@@ -594,16 +616,15 @@ except Exception as account_config_error:
         _runtime.configure_runtime_account(account_id)
 
 try:
-    qmt_extra = {}
-    for function_name in (
-        "get_history_trade_detail_data", "get_value_by_order_id", "get_last_order_id",
-        "get_ipo_data", "get_new_purchase_limit", "get_assure_contract",
-        "get_enable_short_contract", "get_unclosed_compacts", "get_closed_compacts",
-        "get_debt_contract", "get_option_subject_position", "get_comb_option",
-        "get_hkt_exchange_rate",
-    ):
-        if function_name in globals():
-            qmt_extra[function_name] = globals()[function_name]
+    # QMT injects these into THIS file's namespace only, so the single source
+    # (capture_qmt_injected_funcs) has to be handed the entry's own globals().
+    # A hand-copied list drifts: the one here was missing
+    # download_history_data / down_history_data / query_credit_account, which
+    # made the bridge answer "no download channel on this terminal" while the
+    # terminal had the download door open all along (2026-10-15, reproduced
+    # live with a probe strategy: 0 local tick rows -> 69 after a download).
+    qmt_extra = _runtime.capture_qmt_injected_funcs(globals())
+    print("[bigqmt_shell] qmt-injected globals bound=%s" % sorted(qmt_extra))
     _runtime.bind_runtime_api(
         passorder_func=globals().get("passorder"),
         cancel_func=globals().get("cancel"),

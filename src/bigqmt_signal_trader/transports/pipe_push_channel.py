@@ -27,6 +27,7 @@ from .pipe_transport import (
     _BUFFER_BYTES,
     _CONNECT_POLL_SECONDS,
     _kernel32,
+    _server_security_attributes,
     pipe_path,
     DEFAULT_PIPE_NAME,
     ERROR_BROKEN_PIPE,
@@ -92,6 +93,7 @@ class PipeQuotePushChannel(object):
 
     def _accept_loop(self):
         dll, _ = self._dll()
+        security = _server_security_attributes()
         while self._running:
             # DUPLEX, not OUTBOUND: the client's SetNamedPipeHandleState
             # (message read mode) needs GENERIC_WRITE on its handle, and an
@@ -100,7 +102,8 @@ class PipeQuotePushChannel(object):
             handle = dll.CreateNamedPipeW(
                 self.bind_address, PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                PIPE_UNLIMITED_INSTANCES, _BUFFER_BYTES, _BUFFER_BYTES, 0, None)
+                PIPE_UNLIMITED_INSTANCES, _BUFFER_BYTES, _BUFFER_BYTES, 0,
+                ctypes.byref(security[1]))
             if handle == INVALID_HANDLE_VALUE:
                 if not self._running:
                     return

@@ -24,7 +24,9 @@
 
 - 大 QMT 客户端已安装并已登录（各券商版本均可）
 - 一个 Redis；同机可选 ZMQ 免 Redis
-- 客户端机器上有 Python 3.8 以上。**QMT 自带的是 Python 3.6.8**，服务端代码就跑在它里面，这一点在升级时会用到
+- 客户端机器上有 Python 3.8 以上。服务端可能跑在旧 QMT 的 Python 3.6.8，也可能跑在
+  新版 QMT 的 `bin.x64\python312\python.exe`（当前实测 3.12.10）。两者都要保留
+  3.6 语法兼容，除非只维护这一台终端
 
 ## 先选部署方式
 
@@ -225,7 +227,10 @@ tr -d '\r' < D:\...\python\bigqmt_signal_trader\redis_rpc.py | sha256sum
 
 **3. 确认三个顶层文件有没有变。** `bigqmt_signal_trader_strategy.py`、`bigqmt_signal_trader_redis_rpc_runtime.py`、`BIGQMT_REDIS_DRYRUN.py` 是 QMT 自己 exec 的，`reload_deployment` 刷不动它们。新版本里这三个和线上相同，就走热更新；有一个不同，就得重启策略。
 
-**4. 用 QMT 自带的 Python 3.6.8 编译一遍要变的文件。** 仓库 `pyproject` 声明的是 3.8 以上，但服务端跑在 3.6.8 里。`bin.x64\pythonw.exe` 就是它，**没有控制台，报错看不见**，所以让它把结果写进文件：
+**4. 用 QMT 实际使用的 Python 编译一遍要变的文件。** 新版优先用
+`bin.x64\python312\python.exe`，旧版才用 `bin.x64\pythonw.exe`。仓库
+`pyproject` 声明的是客户端版本，不能代表 QMT 服务端。旧 `pythonw.exe` 没有
+控制台，报错看不见，所以让它把结果写进文件：
 
 ```python
 # py36check.py
@@ -244,11 +249,16 @@ open(r"C:\temp\py36result.txt", "w").write("\n".join(out))
 type C:\temp\py36result.txt
 ```
 
-第一行会印出 `python 3.6.8`，证明跑的确实是 QMT 那个解释器。f-string 的 `=` 说明符、海象运算符、`dataclasses` 这些在 3.6 都不存在，有一个 FAIL 就别拷。
+第一行应印出 `python 3.12.10` 或 `python 3.6.8`，证明跑的确实是 QMT 那个
+解释器。保留 3.6 兼容目标时，f-string 的 `=` 说明符、海象运算符、
+`dataclasses` 仍不能在共享代码里使用，有一个 FAIL 就别拷。
 
 **5. 备份。** 整个包目录拷到 QMT 的 `python` 目录**之外**，比如 `D:\...\_deploy_backup_20260911_173558`。放在 `python` 目录里 QMT 会扫到。
 
-**6. 拷贝新包，清 `__pycache__`。** 只拷 `.py`，逐字节校验一遍。`__pycache__` 里是旧字节码，QMT 的 3.6 和你机器上的 3.13 生成的还不兼容，必须清。
+**6. 拷贝新包，清 `__pycache__`。** 只拷 `.py`，逐字节校验一遍。
+`__pycache__` 里是旧字节码，跨解释器版本（尤其 3.6 → 3.12）生成的不兼容，必须清。
+QMT 3.12 的依赖要装到 `bin.x64\python312\Lib\site-packages`，不能从旧
+`bin.x64\Lib\site-packages` 复制 `.pyd`。
 
 **7. 热更新。** 三个顶层文件没变的前提下：
 
@@ -279,7 +289,7 @@ xt_trader.reload_status()                       # 1~2 秒后看这个
 | 面板像正常启动然后"结束运行"，外部连不上 | 看 `download globals bound=[]` 是不是**空的**、有没有 `init ok`。空的说明 QMT 没注入任何 API 全局——文件被当**普通脚本**执行。两个已知原因：在**策略编辑器界面**运行、勾了**「独立 python 进程」**。0.3.8 起入口会直接把这段话打出来（issue #123） |
 | 改了代码但没生效 | QMT 跨重跑保留 `sys.modules`，**拷贝本身不生效**。先用 `get_deployment_info()` 确认跑的是哪个 build，再 `reload_deployment` |
 | `reload_deployment` 后版本没变 | 改的是三个顶层文件之一，热更新刷不动，重启策略 |
-| 升级后策略报 `SyntaxError` | 新代码用了 3.7 以上的语法，QMT 里是 3.6.8。升级前用 `bin.x64\pythonw.exe` 编译一遍 |
+| 升级后策略报 `SyntaxError` | 根据 `get_deployment_info()['runtime']['python_version']` 找到实际解释器，再用同一解释器编译 |
 
 ## 改完代码怎么生效
 

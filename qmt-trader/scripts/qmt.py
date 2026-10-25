@@ -627,12 +627,27 @@ def cmd_financial(args):
         )
     except Exception as e:
         _err("查询财务数据失败", detail=str(e), code="QUERY_FAIL")
+
+    def records(value):
+        if value is None:
+            return []
+        if hasattr(value, "columns"):
+            return value.reset_index().to_dict(orient="records")
+        if hasattr(value, "to_frame"):
+            return value.to_frame().reset_index().to_dict(orient="records")
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        return value
+
     result = {}
-    for code, df in (data or {}).items():
-        if hasattr(df, "to_dict"):
-            result[code] = df.reset_index().to_dict(orient="records")
-        else:
-            result[code] = df
+    if isinstance(data, dict):
+        for code, df in data.items():
+            result[code] = records(df)
+    elif data is not None:
+        # Big QMT returns one stock/one table as a Series, while the documented
+        # MiniQMT shape is dict[code -> rows]. Pandas 3 also makes `data or {}`
+        # raise "truth value of a Series is ambiguous".
+        result[args.codes[0]] = records(data)
     _ok({"financial": result})
 
 

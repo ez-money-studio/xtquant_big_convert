@@ -30,6 +30,74 @@ _monotonic = time.monotonic
 RPC_REVISION = "20260715-execution-snapshot-v1"
 
 
+def _installed_distribution_version(name):
+    """Best-effort distribution version without importing the package.
+
+    ``importlib.metadata`` exists on QMT 3.12 but not on the old 3.6 runtime.
+    Diagnostics must keep working on both, so an unavailable package is an
+    empty string, not an exception.
+    """
+    try:
+        from importlib import metadata
+
+        return str(metadata.version(name) or "")
+    except Exception:
+        return ""
+
+
+def _runtime_metadata():
+    """Describe the interpreter and native dependency ABI running the bridge.
+
+    This is deliberately side-effect free: it does not import pandas, numpy,
+    xtquant or a transport just to answer a diagnostic request. QMT now ships
+    both ``python36`` and ``python312`` trees, so reporting only a version
+    string is not enough to distinguish an old process from a newly deployed
+    wheel or copied package.
+    """
+    import os
+    import platform
+    import struct
+    import sys
+
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    profile = "python%d%d" % (sys.version_info[0], sys.version_info[1])
+    try:
+        import sysconfig
+
+        abi = str(sysconfig.get_config_var("EXT_SUFFIX") or "")
+    except Exception:
+        abi = ""
+    info = {
+        "python_version": version,
+        "profile": profile,
+        "implementation": platform.python_implementation(),
+        "bits": struct.calcsize("P") * 8,
+        "executable": str(getattr(sys, "executable", "") or ""),
+        "prefix": str(getattr(sys, "prefix", "") or ""),
+        "qmt_runtime_dir": os.path.basename(str(getattr(sys, "prefix", "") or "")),
+        "abi": abi,
+        "packages": {
+            name: _installed_distribution_version(name)
+            for name in ("xtquant", "pandas", "numpy", "pyzmq", "redis", "msgpack")
+        },
+    }
+    native_xtquant = sys.modules.get("xtquant")
+    native_path = getattr(native_xtquant, "__file__", "") if native_xtquant else ""
+    if native_path:
+        info["xtquant_path"] = str(native_path)
+    native_constants = sys.modules.get("xtquant.xtconstant")
+    if native_constants is not None:
+        names = [name for name in dir(native_constants) if not name.startswith("_")]
+        info["xtconstant"] = {
+            "count": len(names),
+            "stock_buy": getattr(native_constants, "STOCK_BUY", None),
+            "stock_sell": getattr(native_constants, "STOCK_SELL", None),
+            "security_account": getattr(native_constants, "SECURITY_ACCOUNT", None),
+            "credit_account": getattr(native_constants, "CREDIT_ACCOUNT", None),
+        }
+    return info
+
+
 READ_METHODS = {
     "ping",
     "get_deployment_info",
@@ -863,11 +931,13 @@ class BigQmtRpcHandlers:
             "qmt_python_dir": "",
             "strategy_dir": "",
             "python_version": "",
+            "runtime": {},
             "rpc_revision": RPC_REVISION,
         }
         try:
             info["python_version"] = ".".join(
                 str(part) for part in _sys.version_info[:3])
+            info["runtime"] = _runtime_metadata()
         except Exception:
             pass
         try:
@@ -921,6 +991,8 @@ class BigQmtRpcHandlers:
         "get_market_data", "get_local_data",
         "subscribe_quote", "subscribe_whole_quote", "unsubscribe_quote",
         "get_trading_dates", "get_financial_data", "get_stock_list_in_sector",
+        "get_raw_financial_data", "get_industry", "get_trade_times",
+        "get_his_st_data", "get_ipo_info", "is_suspended_stock",
         "do_back_test", "get_trade_detail_data",
         "get_sector_list", "create_sector", "create_sector_folder",
         "add_sector", "remove_sector", "remove_stock_from_sector", "reset_sector",
@@ -938,6 +1010,7 @@ class BigQmtRpcHandlers:
             "allow_order_methods": self.allow_order_methods,
             "settle_orders_inline": self.settle_orders_inline,
             "order_settle_timeout_seconds": self.order_settle_timeout_seconds,
+            "runtime": _runtime_metadata(),
             "qmt_globals": {},
             "contextinfo_methods": {},
             "credit_probe": {},

@@ -3,6 +3,36 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 和 [语义化版本](https://semver.org/)。
 
 
+## [0.3.68] - 2026-10-25
+
+- **pipe 服务端改用显式 DACL，普通权限客户端不再需要提权。** QMT 2.1.33
+  升级后，默认命名管道 DACL 允许只读探测，却拒绝
+  `GENERIC_READ|GENERIC_WRITE`，表现为 `WinError 5`。RPC 管和事件推送管现在
+  都使用 `SYSTEM/Administrators` 全权限、**当前登录用户**读写权限；行情查询、
+  下单和回调推送共用同一套本地访问策略，不向其他交互用户开放。
+- **长期部署约束：当前 QMT 只用 named pipe。** 不再建议或切换到 Redis/ZMQ；
+  该决定已写入仓库和 quant-script 的 `AGENTS.md`。
+
+## [0.3.67] - 2026-10-25
+
+- **QMT 3.12 运行时纳入正式支持范围。** 部署脚本现在会自动识别
+  `bin.x64\python312\python.exe`（回退到旧 `bin.x64\python.exe`），报告 QMT 内部
+  Python 版本/位数/路径，并用该解释器编译部署包；不再用外部客户端 Python 的版本
+  推断 QMT 端环境。
+- **部署诊断增加运行时 ABI 与依赖版本。** `get_deployment_info` 和
+  `probe_capabilities` 新增 `runtime`：Python 版本/实现/位数、`EXT_SUFFIX`、
+  解释器前缀、已安装的 xtquant/pandas/numpy/pyzmq/redis/msgpack 版本，以及已导入
+  `xtconstant` 时的关键常量。部署后可以直接区分“仍在旧进程”和“已加载新包”。
+- **实测 QMT 2.1.33.0 / Python 3.12.10 / xtquant 250807.1.2 接口对照。**
+  MiniQMT shim 的 538 个 `xtconstant` 定义与新版原生包一致，无改名或改值；
+  `xttype` 新增的方向、买卖标记、股东代码、证券名称、手续费、可取资金字段桥已能
+  透传。原生 `xtdata` 大幅扩充并移除少数旧辅助接口，详见
+  `docs/QMT_312_COMPATIBILITY.md`。
+- **修复 qmt-trader 财务命令在 pandas 3 上的崩溃。** 新 QMT 对单股票单表返回
+  `Series`，旧 CLI 对结果执行 `data or {}` 时触发 “truth value of a Series is
+  ambiguous”。现在兼容 `Series` / `DataFrame` / `dict[code -> frame]`，仍输出
+  MiniQMT 的 `dict[code -> rows]` 形状。
+
 ## [0.3.66] - 2026-10-13
 
 ### 说明

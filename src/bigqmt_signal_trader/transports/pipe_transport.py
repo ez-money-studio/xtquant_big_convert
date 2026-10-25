@@ -66,6 +66,15 @@ ERROR_FILE_NOT_FOUND = 2
 _BUFFER_BYTES = 1 << 20      # 1MB: whole-market quote frames are large
 _CONNECT_POLL_SECONDS = 0.05
 
+# QMT may run at a different elevation/session boundary from the trading
+# client. The default named-pipe DACL then permits a read-only attach but
+# rejects GENERIC_WRITE with WinError 5 -- RPC looks alive but cannot send a
+# request. Keep SYSTEM/admin full access, and explicitly grant the current
+# user read/write. The pipe remains local-only (no network surface).
+_NAMED_PIPE_SDDL_TEMPLATE = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;%s)"
+_security_lock = threading.Lock()
+_security_cache = None
+
 
 def _kernel32():
     if os.name != "nt":
@@ -93,6 +102,117 @@ def _kernel32():
     # drain 模式要用它做非阻塞探测：有数据才 ReadFile，绝不在 adjust 线程上阻塞
     dll.PeekNamedPipe.restype = wintypes.BOOL
     return dll, wintypes
+
+
+def _current_user_sid_string():
+    """Return the current process token's SID without third-party packages."""
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    advapi32.OpenProcessToken.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_void_p)
+    ]
+    advapi32.OpenProcessToken.restype = ctypes.c_int
+    advapi32.GetTokenInformation.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+        ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+    ]
+    advapi32.GetTokenInformation.restype = ctypes.c_int
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+    ]
+    advapi32.ConvertSidToStringSidW.restype = ctypes.c_int
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    class SidAndAttributes(ctypes.Structure):
+        _fields_ = [("Sid", ctypes.c_void_p),
+                    ("Attributes", ctypes.c_ulong)]
+
+    token = ctypes.c_void_p()
+    if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        raise TransportError(
+            "OpenProcessToken failed (WinError %s)" % ctypes.get_last_error())
+    try:
+        needed = ctypes.c_ulong()
+        advapi32.GetTokenInformation(
+            token, 1, None, 0, ctypes.byref(needed))
+        if not needed.value:
+            raise TransportError(
+                "GetTokenInformation returned no TOKEN_USER size")
+        token_user = ctypes.create_string_buffer(needed.value)
+        if not advapi32.GetTokenInformation(
+                token, 1, token_user, needed.value, ctypes.byref(needed)):
+            raise TransportError(
+                "GetTokenInformation failed (WinError %s)"
+                % ctypes.get_last_error())
+        sid = ctypes.cast(
+            token_user, ctypes.POINTER(SidAndAttributes)).contents.Sid
+        sid_text = ctypes.c_void_p()
+        if not advapi32.ConvertSidToStringSidW(
+                sid, ctypes.byref(sid_text)):
+            raise TransportError(
+                "ConvertSidToStringSidW failed (WinError %s)"
+                % ctypes.get_last_error())
+        try:
+            return ctypes.wstring_at(sid_text.value)
+        finally:
+            kernel32.LocalFree(sid_text)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _named_pipe_sddl():
+    return _NAMED_PIPE_SDDL_TEMPLATE % _current_user_sid_string()
+
+
+def _server_security_attributes():
+    """Return SECURITY_ATTRIBUTES for both RPC and event-push pipe servers.
+
+    QMT 2.1.33 on Windows can create the strategy and the external client
+    with different effective pipe permissions. A default DACL made
+    read-only probes succeed while ``CreateFileW(GENERIC_READ|GENERIC_WRITE)``
+    returned WinError 5. Apply an explicit local DACL once per process.
+    """
+    global _security_cache
+    if _security_cache is not None:
+        return _security_cache
+    with _security_lock:
+        if _security_cache is not None:
+            return _security_cache
+
+        class SecurityAttributes(ctypes.Structure):
+            _fields_ = [
+                ("nLength", ctypes.c_ulong),
+                ("lpSecurityDescriptor", ctypes.c_void_p),
+                ("bInheritHandle", ctypes.c_int),
+            ]
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+        convert.argtypes = [
+            ctypes.c_wchar_p,
+            ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_ulong),
+        ]
+        convert.restype = ctypes.c_int
+        descriptor = ctypes.c_void_p()
+        descriptor_size = ctypes.c_ulong()
+        if not convert(_named_pipe_sddl(), 1, ctypes.byref(descriptor),
+                       ctypes.byref(descriptor_size)):
+            raise TransportError(
+                "cannot build named-pipe security descriptor (WinError %s)"
+                % ctypes.get_last_error())
+        attributes = SecurityAttributes()
+        attributes.nLength = ctypes.sizeof(SecurityAttributes)
+        attributes.lpSecurityDescriptor = descriptor
+        attributes.bInheritHandle = 0
+        # Keep both ctypes objects alive for the rest of the process. Freeing
+        # while pipe instances still reference the descriptor is unsafe.
+        _security_cache = (descriptor, attributes)
+        return _security_cache
 
 
 def pipe_path(name=DEFAULT_PIPE_NAME, account_id=""):
@@ -324,11 +444,13 @@ class NamedPipeTransport(RpcTransport):
 
     def _accept_loop(self):
         dll = self._dll()
+        security = _server_security_attributes()
         while self._running:
             handle = dll.CreateNamedPipeW(
                 self.path, PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                PIPE_UNLIMITED_INSTANCES, _BUFFER_BYTES, _BUFFER_BYTES, 0, None)
+                PIPE_UNLIMITED_INSTANCES, _BUFFER_BYTES, _BUFFER_BYTES, 0,
+                ctypes.byref(security[1]))
             if handle == INVALID_HANDLE_VALUE:
                 if not self._running:
                     return

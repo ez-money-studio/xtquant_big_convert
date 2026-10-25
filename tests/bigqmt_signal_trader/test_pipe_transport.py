@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 from bigqmt_signal_trader.transports.base import TransportError
 from bigqmt_signal_trader.transports.factory import KNOWN_TRANSPORTS, build_transport
 from bigqmt_signal_trader.transports.pipe_transport import (
+    _current_user_sid_string,
+    _named_pipe_sddl,
+    _server_security_attributes,
     NamedPipeTransport, pipe_path,
 )
 
@@ -113,6 +116,34 @@ class Kernel32WintypesFallbackTest(unittest.TestCase):
         self.assertTrue(hasattr(fake, "HANDLE"), "HANDLE 没有被补上")
         self.assertTrue(hasattr(fake, "DWORD"), "DWORD 没有被补上")
         self.assertIsNotNone(dll)
+
+
+@WINDOWS_ONLY
+class PipeSecurityTest(unittest.TestCase):
+    """QMT and the client may have different effective pipe permissions.
+
+    Default pipe DACLs produced a read-only attach and WinError 5 on the
+    write half. Both RPC and event pipes must use the explicit local DACL.
+    """
+
+    def test_sddl_grants_only_local_roles_read_write(self):
+        sid = _current_user_sid_string()
+        sddl = _named_pipe_sddl()
+
+        self.assertTrue(sid.startswith("S-1-"), sid)
+        self.assertIn("(A;;GA;;;SY)", sddl)
+        self.assertIn("(A;;GA;;;BA)", sddl)
+        self.assertIn("(A;;GRGW;;;%s)" % sid, sddl)
+        self.assertNotIn(";;;IU)", sddl)
+        self.assertTrue(sddl.startswith("D:P"))
+
+    def test_security_descriptor_is_built_and_retained(self):
+        descriptor, attributes = _server_security_attributes()
+
+        self.assertTrue(descriptor.value)
+        self.assertIn(attributes.nLength, (16, 24))
+        self.assertTrue(attributes.lpSecurityDescriptor)
+        self.assertFalse(attributes.bInheritHandle)
 
 
 class ServiceContractTest(unittest.TestCase):

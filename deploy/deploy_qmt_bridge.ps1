@@ -34,16 +34,54 @@ function Step($m) { Write-Host ""
 function Ok($m)   { Write-Host ("   [ok] " + $m) -ForegroundColor Green }
 function Info($m) { Write-Host ("   .. " + $m) }
 
+function Get-QmtPythonRuntime([string]$Root) {
+    $candidates = @(
+        (Join-Path $Root 'bin.x64\python312\python.exe'),
+        (Join-Path $Root 'bin.x64\python.exe')
+    )
+    foreach ($exe in $candidates) {
+        if (-not (Test-Path -LiteralPath $exe)) { continue }
+        try {
+            $line = & $exe -c "import platform; print(platform.python_version()+'|'+str(8*__import__('struct').calcsize('P')))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $line) {
+                $parts = ($line | Select-Object -First 1).Trim().Split('|')
+                if ($parts.Count -eq 2) {
+                    return [pscustomobject]@{
+                        Version = $parts[0]
+                        Bits = $parts[1]
+                        Executable = $exe
+                    }
+                }
+            }
+        } catch {
+            continue
+        }
+    }
+    return $null
+}
+
 # ---- 0. preconditions -----------------------------------------------------
 Step "0/7 preconditions"
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin -and -not $CheckOnly) { throw "Please run from an elevated (Administrator) PowerShell." }
+$qmtRuntime = Get-QmtPythonRuntime $QmtDir
+$qmtRuntimeLabel = if ($qmtRuntime) {
+    "$($qmtRuntime.Version) ($($qmtRuntime.Bits)-bit)"
+} else {
+    "not detected"
+}
+$qmtSitePackages = if ($qmtRuntime) {
+    Join-Path (Split-Path -Parent $qmtRuntime.Executable) 'Lib\site-packages'
+} else {
+    Join-Path $QmtDir 'bin.x64\Lib\site-packages'
+}
 if ($CheckOnly) {
     Info "check-only mode: reporting state, no writes"
     $items = [ordered]@{
         "QMT dir"            = Test-Path "$QmtDir\bin.x64\XtItClient.exe"
-        "xtquant lib"        = Test-Path "$QmtDir\bin.x64\Lib\site-packages\xtquant"
+        "xtquant lib"        = Test-Path (Join-Path $qmtSitePackages 'xtquant')
+        "QMT 3.12 runtime"   = $(if ($qmtRuntime) { $true } else { $false })
         "server files"       = Test-Path "$QmtDir\python\BIGQMT_REDIS_DRYRUN.py"
         "server local config"= Test-Path "$QmtDir\python\bigqmt_signal_trader_local_config.py"
         "client env"         = ((Test-Path "$WorkDir\envs\bigqmt-client\Scripts\python.exe") -or (Test-Path "$WorkDir\envs\bigqmt\python.exe"))
@@ -60,15 +98,21 @@ if ($CheckOnly) {
     }
     if ($missing -gt 0) { Write-Host "   $missing item(s) missing -> run without -CheckOnly (as Administrator)" }
     else { Write-Host "   deployment complete" }
+    Write-Host "   QMT internal Python: $qmtRuntimeLabel"
     return
 }
 if (-not (Test-Path "$QmtDir\bin.x64\XtItClient.exe")) { throw "Big QMT not found under $QmtDir" }
-if (-not (Test-Path "$QmtDir\bin.x64\Lib\site-packages\xtquant")) {
+if (-not (Test-Path (Join-Path $qmtSitePackages 'xtquant'))) {
     throw "xtquant library missing. Open QMT and run its 'download python libraries' first."
 }
 $pyExe = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $pyExe -and -not $Conda) { throw "System Python not found on PATH (>= 3.10), or pass -Conda to use miniconda." }
 Ok "QMT found; xtquant present; python: $pyExe"
+if ($qmtRuntime) {
+    Ok "QMT internal Python: $qmtRuntimeLabel at $($qmtRuntime.Executable)"
+} else {
+    Info "QMT internal Python not detected; server compatibility compile will be skipped"
+}
 
 # ---- 1. client environment (conda py313 or venv) --------------------------
 Step "1/7 client env (xtquant-big-convert + pandas)"
@@ -146,6 +190,27 @@ if ($src -eq $dst) {
 foreach ($item in @("bigqmt_signal_trader","bigqmt_signal_trader_strategy.py",
                     "bigqmt_signal_trader_redis_rpc_runtime.py","BIGQMT_REDIS_DRYRUN.py")) {
     Copy-Item (Join-Path $src $item) (Join-Path $dst $item) -Recurse -Force
+}
+if ($qmtRuntime) {
+    $compileDir = Join-Path $dst "bigqmt_signal_trader"
+    & $qmtRuntime.Executable -c "import compileall,sys; raise SystemExit(0 if compileall.compile_dir(sys.argv[1], quiet=1, force=True) else 1)" $compileDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "QMT Python $($qmtRuntime.Version) could not compile the deployed bridge package"
+    }
+    Ok "server package compiles under QMT Python $($qmtRuntime.Version)"
+
+    & $qmtRuntime.Executable -c "import redis" *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Info "redis-py is absent from QMT Python $($qmtRuntime.Version); installing the supported 5.x-7.x range"
+        $qmtPipArgs = @("-m", "pip", "install", "-i", $PipIndex,
+                        "--disable-pip-version-check", "redis>=5.0.0,<8.0.0")
+        if ($Proxy) { $qmtPipArgs += @("--proxy", $Proxy) }
+        & $qmtRuntime.Executable @qmtPipArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "QMT Python dependency install failed. Use a compatible redis wheel or choose the pipe/shm transport."
+        }
+    }
+    Ok ("QMT Redis client ready under " + $qmtSitePackages)
 }
 Ok "copied to $dst"
 
