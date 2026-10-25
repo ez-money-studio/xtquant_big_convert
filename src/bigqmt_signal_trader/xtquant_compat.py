@@ -5231,7 +5231,15 @@ class BigQmtXtTrader:
         cost = _safe_float(item.get("cost", item.get("avg_price")))
         price = _safe_float(item.get("price", item.get("last_price")), cost)
         stock_code = str(item.get("stock_code") or "")
-        stock_name = str(item.get("stock_name") or "")
+        stock_name = str(
+            item.get("instrument_name") or item.get("stock_name") or "")
+        last_price = _safe_float(
+            item.get("last_price", item.get("price")), price)
+        profit_rate = _safe_float(item.get("profit_rate"), None)
+        float_profit = _safe_float(item.get("float_profit"), None)
+        position_profit = _safe_float(item.get("position_profit"), None)
+        secu_account = str(item.get("secu_account") or "")
+        open_date = str(item.get("open_date") or "")
         market_value = item.get("market_value")
         if market_value is None:
             market_value = price * volume
@@ -5242,12 +5250,19 @@ class BigQmtXtTrader:
             account_id=account_id,
             stock_code=stock_code,
             stock_name=stock_name,
+            instrument_name=stock_name,
+            secu_account=secu_account,
             volume=volume,
             can_use_volume=available,
             enable_amount=available,
             available_amount=available,
             avg_price=cost,
             price=price,
+            last_price=last_price,
+            profit_rate=profit_rate,
+            float_profit=float_profit,
+            position_profit=position_profit,
+            open_date=open_date,
             open_price=_safe_float(item.get("open_price"), cost),
             cost_price=cost,
             market_value=_safe_float(market_value, 0.0),
@@ -5259,6 +5274,9 @@ class BigQmtXtTrader:
             m_strAccountID=account_id,
             m_strStockCode=stock_code,
             m_strStockName=stock_name,
+            m_strInstrumentName=stock_name,
+            m_strStockHolder=secu_account,
+            m_strOpenDate=open_date,
             m_nVolume=volume,
             m_nCanUseVolume=available,
             m_nCanUseVol=available,
@@ -5266,6 +5284,9 @@ class BigQmtXtTrader:
             m_dOpenPrice=_safe_float(item.get("open_price"), cost),
             m_dAvgPrice=cost,
             m_dLastPrice=price,
+            m_dProfitRate=profit_rate,
+            m_dFloatProfit=float_profit,
+            m_dPositionProfit=position_profit,
             m_dMarketValue=_safe_float(market_value, 0.0),
             m_nFrozenVolume=_safe_int(item.get("frozen_volume")),
             m_nOnRoadVolume=_safe_int(item.get("on_road_volume")),

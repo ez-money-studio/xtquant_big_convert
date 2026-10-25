@@ -3,6 +3,16 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 和 [语义化版本](https://semver.org/)。
 
 
+## [0.3.71] - 2026-10-25
+
+- **高层持仓兼容对象补齐 QMT 250807 字段。** `query_stock_positions()` 现在返回
+  `instrument_name`、`secu_account`、`last_price`、`profit_rate`、`float_profit`、
+  `position_profit`、`open_date`，并保留对应 `m_*` 原生别名。服务端持仓快照同步
+  读取 `m_strStockHolder`、`m_dProfitRate`、`m_dFloatProfit`、
+  `m_dPositionProfit`、`m_strOpenDate`。
+- **启动日志显式记录 Python runtime / ABI。** QMT 面板启动时现在同时打印
+  Python 实现、版本、`EXT_SUFFIX` 和 prefix，升级后可直接确认实际解释器。
+
 ## [0.3.70] - 2026-10-25
 
 - **全局捕获名单再补齐 6 个官方策略全局。** 加入 ETF 申赎 `get_etf_info` /

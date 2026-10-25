@@ -414,6 +414,11 @@ class BigQmtAdaptersTest(unittest.TestCase):
                         m_nOnRoadVolume=10,
                         m_nYesterdayVolume=900,
                         m_strInstrumentName="ETF",
+                        m_strStockHolder="A123456",
+                        m_dProfitRate=0.096,
+                        m_dFloatProfit=333.0,
+                        m_dPositionProfit=120.0,
+                        m_strOpenDate="20260801",
                     )
                 ]
             return []
@@ -430,6 +435,13 @@ class BigQmtAdaptersTest(unittest.TestCase):
         self.assertEqual(positions["510300.SH"].frozen_volume, 200)
         self.assertEqual(positions["510300.SH"].on_road_volume, 10)
         self.assertEqual(positions["510300.SH"].yesterday_volume, 900)
+        self.assertEqual(positions["510300.SH"].instrument_name, "ETF")
+        self.assertEqual(positions["510300.SH"].secu_account, "A123456")
+        self.assertEqual(positions["510300.SH"].last_price, 3.789)
+        self.assertEqual(positions["510300.SH"].profit_rate, 0.096)
+        self.assertEqual(positions["510300.SH"].float_profit, 333.0)
+        self.assertEqual(positions["510300.SH"].position_profit, 120.0)
+        self.assertEqual(positions["510300.SH"].open_date, "20260801")
 
     def test_order_gateway_submit_uses_qmt_jq_trade_passorder_shape(self):
         calls = []

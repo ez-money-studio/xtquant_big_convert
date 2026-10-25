@@ -99,6 +99,11 @@ class StartupReportingTest(unittest.TestCase):
 
         self.assertIn("except Exception", source[start:end])
 
+    def test_the_report_names_python_runtime_and_abi(self):
+        source = self._runtime_source()
+        self.assertIn("platform.python_implementation()", source)
+        self.assertIn('sysconfig.get_config_var("EXT_SUFFIX")', source)
+
 
 if __name__ == "__main__":
     unittest.main()

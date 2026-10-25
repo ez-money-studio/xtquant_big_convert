@@ -228,6 +228,36 @@ class LifecycleReturnTest(unittest.TestCase):
         trader.stop()
 
 
+class PositionNewFieldsTest(unittest.TestCase):
+    def test_native_position_fields_reach_the_compat_object(self):
+        position = _trader()._position_object("acct", {
+            "stock_code": "510300.SH",
+            "volume": 1000,
+            "available": 800,
+            "cost": 3.456,
+            "price": 3.789,
+            "market_value": 3789.0,
+            "instrument_name": "沪深300ETF",
+            "secu_account": "A123456",
+            "last_price": 3.789,
+            "profit_rate": 0.096,
+            "float_profit": 333.0,
+            "position_profit": 120.0,
+            "open_date": "20260801",
+        })
+
+        self.assertEqual(position.instrument_name, "沪深300ETF")
+        self.assertEqual(position.stock_name, "沪深300ETF")
+        self.assertEqual(position.secu_account, "A123456")
+        self.assertEqual(position.last_price, 3.789)
+        self.assertEqual(position.profit_rate, 0.096)
+        self.assertEqual(position.float_profit, 333.0)
+        self.assertEqual(position.position_profit, 120.0)
+        self.assertEqual(position.open_date, "20260801")
+        self.assertEqual(position.m_dProfitRate, 0.096)
+        self.assertEqual(position.m_strStockHolder, "A123456")
+
+
 class SurrogateTest(unittest.TestCase):
     def test_it_is_stable(self):
         """Same string, same number, in any process -- a caller comparing ids

@@ -216,6 +216,23 @@ class BigQmtPositionProvider:
                 yesterday_volume=_required_count(
                     row, ("m_nYesterdayVolume", "yesterday_volume"), "yesterday_volume", code, account_id),
                 direction=int(_attr(row, ("m_nDirection", "direction"), 48) or 48),
+                instrument_name=str(
+                    _attr(row, ("m_strInstrumentName", "instrument_name",
+                                "stock_name"), "") or ""),
+                secu_account=str(
+                    _attr(row, ("m_strStockHolder", "m_strShareholderID",
+                                "secu_account"), "") or ""),
+                last_price=_float_or_none(
+                    _attr(row, ("m_dLastPrice", "last_price"))),
+                profit_rate=_float_or_none(
+                    _attr(row, ("m_dProfitRate", "profit_rate"))),
+                float_profit=_float_or_none(
+                    _attr(row, ("m_dFloatProfit", "float_profit"))),
+                position_profit=_float_or_none(
+                    _attr(row, ("m_dPositionProfit", "position_profit"))),
+                open_date=str(
+                    _attr(row, ("m_strOpenDate", "m_nOpenDate",
+                                "open_date"), "") or ""),
             ))
         return positions
 

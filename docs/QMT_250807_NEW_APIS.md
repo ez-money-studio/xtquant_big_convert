@@ -66,9 +66,10 @@
   `position_profit`
 - 资产：`fetch_balance`
 
-桥已支持委托/成交的主要新增字段和资产 `fetch_balance`。高层的
-`query_stock_positions()` 仍以旧 `PositionSnapshot` 字段为准；需要完整原生持仓字段时，
-必须通过原始交易明细接口或后续新增兼容字段，不能假设已有同名属性。
+桥已支持委托/成交的主要新增字段、资产 `fetch_balance`，以及高层
+`query_stock_positions()` 的 `instrument_name`、`secu_account`、`last_price`、
+`profit_rate`、`float_profit`、`position_profit`、`open_date`。这些字段同时提供
+原生 `m_*` 别名。
 
 ## 3. 原生 `xtdata` 新增接口
 

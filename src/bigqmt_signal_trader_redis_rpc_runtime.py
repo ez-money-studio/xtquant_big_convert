@@ -258,6 +258,10 @@ def _report_deployment():
     look identical from the outside. This line tells them apart at a glance.
     """
     try:
+        import platform
+        import sys
+        import sysconfig
+
         # Submodule, not the root package: the QMT sandbox never execs
         # bigqmt_signal_trader/__init__.py, so anything defined there is
         # invisible in exactly the environment this line describes.
@@ -266,6 +270,10 @@ def _report_deployment():
         version, directory = deployment_report()
         print("[bigqmt_shell] bigqmt_signal_trader %s loaded from %s"
               % (version, directory))
+        print("[bigqmt_shell] runtime %s %s abi=%s prefix=%s"
+              % (platform.python_implementation(), sys.version.split()[0],
+                 sysconfig.get_config_var("EXT_SUFFIX") or "",
+                 getattr(sys, "prefix", "")))
     except Exception as exc:
         print("[bigqmt_shell] version report unavailable: %s" % exc)
 
